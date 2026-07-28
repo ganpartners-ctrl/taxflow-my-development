@@ -1,0 +1,36 @@
+{
+  "rows": [
+    {
+      "page no": 1,
+      "finance institute": "Public Bank",
+      "short form": "PBB",
+      "Company name": "GIGAWAY SOLUTION SDN BHD",
+      "account number": "3812626130",
+      "account type": "RM Cm Current Account-i",
+      "statement date": 46142,
+      "date": 46112,
+      "transaction line 1": "Balance From Last Statement",
+      "transaction line 2": null,
+      "transaction line 3": null,
+      "Debit (DR)": null,
+      "Credit (Cr)": null,
+      "Balance": 1143.14
+    },
+    {
+      "page no": 1,
+      "finance institute": "Public Bank",
+      "short form": "PBB",
+      "Company name": "GIGAWAY SOLUTION SDN BHD",
+      "account number": "3812626130",
+      "account type": "RM Cm Current Account-i",
+      "statement date": 46142,
+      "date": 46115,
+      "transaction line 1": "DEP-ECP 213881",
+      "transaction line 2": "IMEPS20260403100002271549096 MBB",
+      "transaction line 3": "INTEGRATED LOGISTICS SOLUTIONS SDN. BHD. MBB",
+      "Debit (DR)": null,
+      "Credit (Cr)": 1738.8,
+      "Balance": 2881.94
+    }
+  ]
+}

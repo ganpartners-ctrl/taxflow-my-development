@@ -1,0 +1,131 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Bank Statement Extraction</title>
+    <link rel="stylesheet" href="src/bank-statement-ui.css" />
+  </head>
+  <body>
+    <main class="bank-app">
+      <aside class="left-panel">
+        <div class="brand-row">
+          <div class="brand-mark">BS</div>
+          <div>
+            <strong>Statement Extract</strong>
+            <span>Ledger API</span>
+          </div>
+        </div>
+
+        <section class="upload-panel">
+          <div class="panel-heading">
+            <p>Upload</p>
+            <h1>Bank statement extraction</h1>
+          </div>
+
+          <label class="drop-zone" for="pdfFile">
+            <input id="pdfFile" type="file" accept="application/pdf" />
+            <span class="drop-icon">PDF</span>
+            <strong id="fileName">Choose PDF statement</strong>
+            <small id="fileMeta">Public Bank, Maybank, CIMB and other statement files</small>
+          </label>
+
+          <div class="field-grid">
+            <label>
+              Finance institute
+              <input id="financeInstitute" value="Public Bank" />
+            </label>
+            <label>
+              Short form
+              <input id="financeShortForm" value="PBB" />
+            </label>
+            <label>
+              Company name
+              <input id="companyName" value="GIGAWAY SOLUTION SDN BHD" />
+            </label>
+            <label>
+              Account number
+              <input id="accountNumber" value="3812626130" />
+            </label>
+          </div>
+
+          <div class="action-row">
+            <button class="primary-button" id="extractButton" type="button">
+              <span>Extract</span>
+            </button>
+            <button class="secondary-button" id="refreshButton" type="button">
+              <span>Refresh rows</span>
+            </button>
+          </div>
+        </section>
+
+        <section class="status-panel">
+          <div>
+            <span class="status-dot" id="apiDot"></span>
+            <strong id="apiStatus">Checking API</strong>
+          </div>
+          <p id="jobStatus">No extraction job yet.</p>
+        </section>
+      </aside>
+
+      <section class="workspace-panel">
+        <header class="summary-bar">
+          <div class="summary-item">
+            <span>Rows</span>
+            <strong id="rowCount">0</strong>
+          </div>
+          <div class="summary-item">
+            <span>Debit</span>
+            <strong id="debitTotal">0.00</strong>
+          </div>
+          <div class="summary-item">
+            <span>Credit</span>
+            <strong id="creditTotal">0.00</strong>
+          </div>
+          <div class="summary-item">
+            <span>Closing balance</span>
+            <strong id="closingBalance">0.00</strong>
+          </div>
+        </header>
+
+        <section class="table-section">
+          <div class="table-title">
+            <div>
+              <p>Extracted ledger</p>
+              <h2>Database rows</h2>
+            </div>
+            <a class="download-link" href="http://127.0.0.1:5060/api/ledger-rows.csv">CSV</a>
+          </div>
+
+          <div class="table-wrap">
+            <table>
+              <thead>
+                <tr>
+                  <th>Page</th>
+                  <th>Bank</th>
+                  <th>Short</th>
+                  <th>Company</th>
+                  <th>Account</th>
+                  <th>Date</th>
+                  <th>Transaction 1</th>
+                  <th>Transaction 2</th>
+                  <th>Transaction 3</th>
+                  <th class="num">Debit</th>
+                  <th class="num">Credit</th>
+                  <th class="num">Balance</th>
+                </tr>
+              </thead>
+              <tbody id="ledgerBody">
+                <tr>
+                  <td colspan="12" class="empty-row">Upload and extract a statement to view rows.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </section>
+      </section>
+    </main>
+
+    <script src="src/bank-statement-ui.js"></script>
+  </body>
+</html>

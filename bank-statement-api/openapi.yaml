@@ -1,0 +1,140 @@
+openapi: 3.0.3
+info:
+  title: Bank Statement Extraction API
+  version: 0.1.0
+  description: API contract for saving extracted bank statement ledger rows using the same fields as the Excel requirement file.
+servers:
+  - url: http://127.0.0.1:5060
+paths:
+  /health:
+    get:
+      summary: Health check
+      responses:
+        "200":
+          description: API is running
+  /api/schema:
+    get:
+      summary: Return the ledger columns and Excel header mapping
+      responses:
+        "200":
+          description: Schema metadata
+  /api/extractions:
+    get:
+      summary: List extraction jobs
+      responses:
+        "200":
+          description: Extraction jobs
+    post:
+      summary: Create an extraction job
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              properties:
+                source_filename:
+                  type: string
+                  example: GIGA-PBB 2026-04.pdf
+                source_bank:
+                  type: string
+                  example: Public Bank
+                content_base64:
+                  type: string
+                  description: Optional base64 PDF bytes if the caller wants the API to store the source file.
+      responses:
+        "201":
+          description: Extraction job created
+  /api/extractions/{extraction_id}/ledger-rows:
+    get:
+      summary: List ledger rows for one extraction
+      parameters:
+        - name: extraction_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      responses:
+        "200":
+          description: Ledger rows
+    post:
+      summary: Save extracted ledger rows
+      parameters:
+        - name: extraction_id
+          in: path
+          required: true
+          schema:
+            type: integer
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              type: object
+              required: [rows]
+              properties:
+                rows:
+                  type: array
+                  items:
+                    $ref: "#/components/schemas/LedgerRowInput"
+      responses:
+        "201":
+          description: Rows saved
+  /api/ledger-rows:
+    get:
+      summary: List all ledger rows
+      parameters:
+        - name: account_number
+          in: query
+          required: false
+          schema:
+            type: string
+      responses:
+        "200":
+          description: Ledger rows
+  /api/ledger-rows.csv:
+    get:
+      summary: Download all ledger rows as CSV
+      responses:
+        "200":
+          description: CSV export
+components:
+  schemas:
+    LedgerRowInput:
+      type: object
+      properties:
+        page_no:
+          type: integer
+        finance_institute:
+          type: string
+          example: Public Bank
+        finance_institute_short_form:
+          type: string
+          example: PBB
+        company_name:
+          type: string
+        account_number:
+          type: string
+        account_type:
+          type: string
+        statement_date:
+          type: string
+          description: ISO date or Excel serial date
+        transaction_date:
+          type: string
+          description: ISO date or Excel serial date
+        transaction_line_1:
+          type: string
+        transaction_line_2:
+          type: string
+        transaction_line_3:
+          type: string
+        debit_dr:
+          type: number
+          nullable: true
+        credit_cr:
+          type: number
+          nullable: true
+        balance:
+          type: number
+          nullable: true

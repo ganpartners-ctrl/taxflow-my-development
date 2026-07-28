@@ -1,0 +1,39 @@
+# Runtime/dependency folders
+node_modules/
+__pycache__/
+.python-deps/
+.python-deps-clean/
+.skill-validate-deps/
+.agents/
+
+# Browser/test profiles and generated temp state
+edge-shot-profile/
+edge-shot-profile2/
+tmp/
+rendered-harness-blueprint/
+
+# Logs
+*.log
+*.out
+*.err
+server-*.log
+ocr-proxy.*.log
+
+# Client/confidential source documents and handoff archives
+*.pdf
+*.docx
+*.xlsx
+*.xls
+*.csv
+*.zip
+*.sqlite
+*.sqlite3
+
+# Generated handoff/build snapshots
+taxflow-*-*/
+taxflow-*.zip
+claude-handoff/
+
+# Keep source and project skills, ignore other Codex/runtime clutter by default
+.codex/plugins/
+.codex/cache/

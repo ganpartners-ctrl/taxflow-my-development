@@ -1,0 +1,13 @@
+{
+  "name": "taxflow-my-development",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "start": "node preview-server.cjs",
+    "serve": "node preview-server.cjs",
+    "ocr-proxy": "node local-ocr-proxy.cjs"
+  },
+  "dependencies": {},
+  "devDependencies": {}
+}
