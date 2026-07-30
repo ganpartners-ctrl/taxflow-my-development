@@ -2926,6 +2926,7 @@ function renderComplianceHub(){
       </div>
     </div>
     <div id="doc-preview-box"></div>
+    ${renderTaxKnowledgeCriteriaLibrary()}
     <div class="card">
       <div class="card-title">Completion Gates Before Final Filing Pack</div>
       ${gate('Client KYC',hasKyc,'PIC, second PIC, profile and correspondence details captured.')}
@@ -2967,6 +2968,165 @@ function complianceExportPlan(){
   a.click();
   setTimeout(()=>URL.revokeObjectURL(a.href),800);
   showNotif('success','Exported','Compliance architecture plan downloaded');
+}
+
+function taxKnowledgeDefaultRows(){
+  const years=Array.from({length:9},(_,i)=>2018+i);
+  const review='review_required';
+  const source='Admin to confirm against LHDN / legislation / public ruling';
+  const rateRows=years.flatMap(ya=>[
+    {category:'Tax rate',ya,item:'Company - non SME',criterion:'Standard company tax rate; check whether preferential rate applies',rateOrCap:'24%',source,status:review,notes:''},
+    {category:'Tax rate',ya,item:'Company - SME first tier',criterion:'Resident SME/company eligible for preferential first chargeable-income band; verify paid-up capital, gross income and related-company rules',rateOrCap:ya>=2023?'15% first tier; 17% next tier; 24% balance':'17% first tier; 24% balance',source,status:review,notes:''},
+    {category:'Tax rate',ya,item:'Limited Liability Partnership',criterion:'LLP tax model; verify SME eligibility and partner-level items separately',rateOrCap:'Use LLP/company matrix subject to eligibility',source,status:review,notes:''},
+    {category:'Tax rate',ya,item:'Sole proprietor / Form B',criterion:'No retained earnings; tax follows individual progressive rates and business-source adjustments',rateOrCap:'Individual progressive rates',source,status:review,notes:''},
+    {category:'Tax rate',ya,item:'Partnership / Form P',criterion:'Partnership allocates adjusted income/loss to partners; partners assessed in their own returns',rateOrCap:'Allocation statement, not entity tax rate',source,status:review,notes:''},
+    {category:'Tax rate',ya,item:'Non-resident / Form M',criterion:'Malaysian-source income only; check source category and treaty/withholding rules',rateOrCap:'Source-specific / non-resident rate',source,status:review,notes:''}
+  ]);
+  const caRows=[
+    ['Office equipment','Normal CA','IA and AA depend on asset class and year of purchase; check whether ACA applies','IA/AA editable'],
+    ['Computer / ICT equipment','ACA candidate','Potential ACA / special allowance; verify YA and qualifying asset conditions','ACA / normal CA choice'],
+    ['Motor vehicle','Restriction review','Private motor vehicle cost restriction and qualifying expenditure limits require reviewer confirmation','Restricted QE / normal'],
+    ['Small value assets','SVA review','Low-cost asset treatment and annual cap need YA-specific confirmation','Cap editable'],
+    ['Industrial building / infrastructure','IBA / infrastructure allowance','Building use, qualifying construction and certificate/supporting docs required','IBA rate editable'],
+    ['Automation equipment','Automation CA candidate','Automation allowance / ACA may require approval letter and eligible sector confirmation','Approval-linked'],
+    ['Disposal / written off','Balancing adjustment','Compare disposal proceeds, tax WDV and prior CA claimed','BC / BA computed']
+  ].map(x=>({category:'CA / ACA',ya:'2018-2026',item:x[0],criterion:x[2],rateOrCap:x[3],source,status:review,notes:x[1]}));
+  const d4Rows=taxIncentiveD4Master().map(x=>[
+    `${x.code} - ${x.label}`,
+    'D4 incentive claim code. User must confirm eligibility, effective YA, approval/reference letter, qualifying income/expenditure and claim amount before tax computation.',
+    'D4 code / approval-linked'
+  ]);
+  const incentiveRows=[
+    ['Pioneer Status','Income exemption by approved activity and period; approval letter, promoted product/service and effective YA required','Approval period / exempt %'],
+    ['Investment Tax Allowance (ITA)','Qualifying capital expenditure and statutory income shelter need approval reference','Approval-linked allowance'],
+    ['Reinvestment Allowance (RA)','Manufacturing/agriculture reinvestment conditions; schedule 7A / incentive code review','D4 code / claim cap'],
+    ['Automation Capital Allowance','Eligible automation equipment and sector approval needed','Allowance / exemption cap'],
+    ['Accelerated Capital Allowance (ACA)','Asset-specific accelerated write-off; select ACA or non-ACA per asset row','IA/AA override'],
+    ['Allowance for Increased Export','Export increase calculation and qualifying export records required','Formula / cap editable'],
+    ['Double Deduction - R&D','Approved/qualifying R&D cost; project approval and supporting documents required','Deduction multiplier / cap'],
+    ['Double Deduction - Export Promotion','Promotion expenses must meet qualifying export promotion criteria','Deduction multiplier / cap'],
+    ['Double Deduction - Training','Approved training provider/programme and eligible employee cost required','Deduction multiplier / cap'],
+    ['Green Technology incentive','Approved green asset/project; verify certificate and qualifying period','Approval-linked'],
+    ['MSC / Digital / BioNexus incentive','Status certificate and income/activity ring-fencing required','Approval-linked'],
+    ['Halal / Food Production / Agriculture','Sector-specific incentive; approval and qualifying expenditure/income required','Approval-linked']
+  ].concat(d4Rows).map(x=>({category:'Incentive / DD',ya:'2018-2026',item:x[0],criterion:x[1],rateOrCap:x[2],source,status:review,notes:''}));
+  const expenseRows=[
+    ['S.33(1) Allowable','Expense wholly and exclusively incurred in production of gross income; source invoice and business purpose required','100% subject to review'],
+    ['S.39 Add-back','Non-deductible or restricted expense; add back in tax computation','100% add-back unless partial'],
+    ['Entertainment','Classify customer/staff/promotional/private entertainment; partial restriction may apply','Allowable % editable'],
+    ['Donation / Gift','Check approved institution, receipt, gross income percentage cap and HK schedule','Cap editable'],
+    ['Penalty / Fine','Generally review for add-back unless compensatory/business nature is proven','Add-back default'],
+    ['Interest / S.4(c)','Separate business interest, deemed interest, passive interest and withholding/tax deduction evidence','Source-specific'],
+    ['HP Interest / Principal','Interest may be deductible; principal is capital repayment and should not be deducted','Split required'],
+    ['Professional / Audit / Tax fee','Review capital/revenue nature, statutory audit, tax filing and advisory split','Treatment editable'],
+    ['Foreign exchange / withholding','Check realised/unrealised, source, WHT, treaty and documentation','Review required'],
+    ['Related party / director items','Check deemed interest, transfer pricing, benefit in kind, EA/Form C schedule links','Review required']
+  ].map(x=>({category:'Expense treatment',ya:'2018-2026',item:x[0],criterion:x[1],rateOrCap:x[2],source,status:review,notes:''}));
+  const classificationRows=[
+    ['Asset','Positive balance is Dr; negative is Cr. Non-current assets feed BS asset sections and FA/CA review when fixed asset related.'],
+    ['Contra asset','Accumulated depreciation/impairment is credit-positive and reduces carrying amount; do not send to P&L unless depreciation expense account.'],
+    ['Liability','Positive credit goes to Cr; debit balance flags overpayment/prepayment or reclassification review.'],
+    ['Equity / retained earnings','Company only: credit-positive retained earning; debit means accumulated loss. Form B/P/M use proprietor/partner/source capital instead.'],
+    ['Revenue','Credit movements and closing credit balances feed P&L revenue; debit revenue lines require reversal/credit-note review.'],
+    ['Cost of sales','Expense accounts mapped to COS must total under Cost of sales before gross profit.'],
+    ['Administrative expenses','Admin accounts stay under administrative expenses unless user maps otherwise; do not split into selling without explicit mapping.'],
+    ['Temporary / contra clearing','If total debit equals total credit for the account, closing balance should be zero and excluded from BS/PL amount.']
+  ].map(x=>({category:'Classification',ya:'All',item:x[0],criterion:x[1],rateOrCap:'System rule',source:'malaysia-audit-ai / admin review',status:review,notes:''}));
+  return [...classificationRows,...rateRows,...caRows,...incentiveRows,...expenseRows];
+}
+function taxKnowledgeRows(){
+  if(!currentClient) return taxKnowledgeDefaultRows();
+  const db=ensureClientTypeDatabase(currentClient);
+  db.records=db.records||{};
+  if(!Array.isArray(db.records.tax_knowledge_criteria)||!db.records.tax_knowledge_criteria.length){
+    db.records.tax_knowledge_criteria=taxKnowledgeDefaultRows();
+  }
+  return db.records.tax_knowledge_criteria;
+}
+function taxKnowledgeCats(){
+  return ['Classification','Tax rate','CA / ACA','Incentive / DD','Expense treatment'];
+}
+function renderTaxKnowledgeCriteriaLibrary(){
+  if(!currentClient) return '';
+  const rows=taxKnowledgeRows();
+  const cats=taxKnowledgeCats();
+  const table=(cat)=>{
+    const list=rows.filter(r=>r.category===cat);
+    return `<div class="card" style="margin-top:10px">
+      <div style="display:flex;justify-content:space-between;gap:10px;align-items:center">
+        <div><div class="card-title">${tfEsc(cat)} criteria</div><div style="font-size:11px;color:var(--t3)">Editable review matrix. Confirmed rows can be used by AI mapping/tax computation suggestions.</div></div>
+        <button class="btn btn-ghost btn-sm" onclick="taxExportKnowledgeCsv('${tfEsc(cat)}')">Export CSV</button>
+      </div>
+      <div style="overflow:auto;margin-top:8px">
+        <table class="t">
+          <thead><tr><th style="min-width:60px">YA</th><th style="min-width:210px">Item</th><th style="min-width:360px">Criteria / Logic</th><th style="min-width:150px">Rate / Cap</th><th style="min-width:160px">Source</th><th style="min-width:120px">Status</th><th style="min-width:180px">Notes</th></tr></thead>
+          <tbody>${list.map((r,i)=>{
+            const idx=rows.indexOf(r);
+            return `<tr>
+              <td><input class="fi" value="${tfEsc(r.ya)}" data-tax-knowledge="${idx}" data-field="ya" onchange="taxKnowledgeUpdate(this)"></td>
+              <td><input class="fi" value="${tfEsc(r.item)}" data-tax-knowledge="${idx}" data-field="item" onchange="taxKnowledgeUpdate(this)"></td>
+              <td><textarea class="fi" style="min-height:42px" data-tax-knowledge="${idx}" data-field="criterion" onchange="taxKnowledgeUpdate(this)">${tfEsc(r.criterion)}</textarea></td>
+              <td><input class="fi" value="${tfEsc(r.rateOrCap)}" data-tax-knowledge="${idx}" data-field="rateOrCap" onchange="taxKnowledgeUpdate(this)"></td>
+              <td><input class="fi" value="${tfEsc(r.source)}" data-tax-knowledge="${idx}" data-field="source" onchange="taxKnowledgeUpdate(this)"></td>
+              <td><select class="fsel" data-tax-knowledge="${idx}" data-field="status" onchange="taxKnowledgeUpdate(this)"><option ${r.status==='review_required'?'selected':''}>review_required</option><option ${r.status==='confirmed'?'selected':''}>confirmed</option><option ${r.status==='not_applicable'?'selected':''}>not_applicable</option></select></td>
+              <td><input class="fi" value="${tfEsc(r.notes)}" data-tax-knowledge="${idx}" data-field="notes" onchange="taxKnowledgeUpdate(this)"></td>
+            </tr>`;
+          }).join('')}</tbody>
+        </table>
+      </div>
+    </div>`;
+  };
+  return `<div class="card" style="margin-bottom:12px">
+    <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start">
+      <div>
+        <div class="card-title">Tax Knowledge / Criteria Library - YA 2018 to YA 2026</div>
+        <div style="font-size:12px;color:var(--t3);line-height:1.45">Central review table for mapping classification, return-type rates, CA/ACA, incentive claims, double deductions, and allowable/unallowable treatment. Rows stay review-required until an admin confirms the legal source and effective YA.</div>
+      </div>
+      <div style="display:flex;gap:7px;flex-wrap:wrap;justify-content:flex-end">
+        <button class="btn btn-ghost btn-sm" onclick="taxKnowledgeReset()">Reset Defaults</button>
+        <button class="btn btn-primary btn-sm" onclick="taxKnowledgeSave()">Save Criteria</button>
+        <button class="btn btn-ghost btn-sm" onclick="taxExportKnowledgeCsv('all')">Export All CSV</button>
+      </div>
+    </div>
+    <div style="display:flex;gap:6px;flex-wrap:wrap;margin-top:10px">${cats.map(c=>`<span class="badge b-blue">${tfEsc(c)}: ${rows.filter(r=>r.category===c).length}</span>`).join('')}</div>
+    ${cats.map(table).join('')}
+  </div>`;
+}
+function taxKnowledgeUpdate(el){
+  const idx=Number(el?.dataset?.taxKnowledge);
+  const field=el?.dataset?.field;
+  const rows=taxKnowledgeRows();
+  if(!Number.isFinite(idx)||!field||!rows[idx]) return;
+  rows[idx][field]=el.value;
+  rows[idx].updatedAt=new Date().toISOString();
+}
+function taxKnowledgeSave(){
+  if(!currentClient) return;
+  const db=ensureClientTypeDatabase(currentClient);
+  db.records=db.records||{};
+  db.records.tax_knowledge_criteria=taxKnowledgeRows();
+  tfSaveState();
+  showNotif('success','Saved','Tax criteria library saved for this client/type database');
+}
+function taxKnowledgeReset(){
+  if(!currentClient) return;
+  if(!confirm('Reset the tax criteria library to default review-required rows?')) return;
+  const db=ensureClientTypeDatabase(currentClient);
+  db.records=db.records||{};
+  db.records.tax_knowledge_criteria=taxKnowledgeDefaultRows();
+  tfSaveState();
+  renderComplianceHub();
+  showNotif('success','Reset','Default criteria library restored');
+}
+function taxExportKnowledgeCsv(cat='all'){
+  const rows=taxKnowledgeRows().filter(r=>cat==='all'||r.category===cat);
+  const cols=['category','ya','item','criterion','rateOrCap','source','status','notes','updatedAt'];
+  const csv=[cols.join(','),...rows.map(r=>cols.map(c=>`"${String(r[c]??'').replace(/"/g,'""')}"`).join(','))].join('\n');
+  const a=document.createElement('a');
+  a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));
+  a.download=`TaxFlow_tax_criteria_${cat}_${currentClient?.name||'client'}_${currentYA?.ya||'YA'}.csv`.replace(/[\\/:*?"<>|]+/g,'-');
+  a.click();
+  setTimeout(()=>URL.revokeObjectURL(a.href),800);
 }
 
 function taxExcelSheetSpecs(){
@@ -4641,9 +4801,9 @@ function renderFormC(){
         <div style="background:var(--blue);color:#fff;padding:4px 12px;border-radius:4px;font-weight:700;font-size:13px">e-C \u00b7 YA ${tfEsc(y.ya||'')}</div>
       </div>
       <div style="padding:14px 18px">
-        <div style="font-size:9.5px;font-weight:700;color:var(--blue3);text-transform:uppercase;letter-spacing:.6px;margin:0 0 8px;padding-bottom:6px;border-bottom:1px solid var(--line)">MAKLUMAT ASAS \u2014 Basic Information</div>
+        <div style="font-size:9.5px;font-weight:700;color:var(--blue3);text-transform:uppercase;letter-spacing:.6px;margin:0 0 8px;padding-bottom:6px;border-bottom:1px solid var(--line)">Basic Information</div>
         ${D('Nama syarikat / Company Name',c.name||'Not set','')}
-        ${D('No. Pengenalan Cukai (TIN)',c.tin||'Not set','')}
+        ${D('TIN / Tax Identification No.',c.tin||'Not set','')}
         ${D('Tempoh asas / Basis Period',(basisFrom&&basisTo)?`${basisFrom} \u2013 ${basisTo}`:'Not set','')}
         ${D('SME Status',modeLabel,'')}
         <div style="font-size:9.5px;font-weight:700;color:var(--blue3);text-transform:uppercase;letter-spacing:.6px;margin:12px 0 8px;padding-top:8px;border-top:1px solid var(--line)">PENDAPATAN BERKANUN \u2014 Statutory Income</div>
@@ -6670,24 +6830,24 @@ function taxMsicDesc(code){
 }
 function taxIncentiveD4Master(){
   return [
-    {code:'401',label:'Elaun Modal Dipercepatkan'},
-    {code:'402',label:'Elaun Bangunan Industri'},
-    {code:'403',label:'Projek Perkhidmatan Diluluskan'},
-    {code:'404',label:'Pengecualian di bawah Subseksyen 127(3A)'},
-    {code:'405',label:'Pengecualian Mengikut Ketetapan Menteri'},
-    {code:'406',label:'Elaun Pelaburan Semula'},
-    {code:'407',label:'Infrastruktur Awam'},
-    {code:'408',label:'Elaun Peningkatan Eksport bagi Syarikat Perkhidmatan'},
-    {code:'409',label:'Insentif Pre-Pakej di bawah Akta Penggalakan Pelaburan 1986'},
-    {code:'410',label:'Pengecualian Cukai Bagi Meningkatkan Eksport'},
-    {code:'411',label:'Elaun Kumpulan Wang Simpanan'},
-    {code:'412',label:'Insentif Tempoh Asas'},
-    {code:'413',label:'Elaun Jadual 7A'},
-    {code:'414',label:'Elaun Jadual 7B'},
-    {code:'415',label:'Elaun Bangunan Industri'},
-    {code:'416',label:'Insentif Cukai untuk Menggalakkan Pengkomersilan R&D dalam Penemuan Berasaskan Sumber'},
-    {code:'417',label:'Insentif Cukai untuk Menggalakkan Pengkomersilan R&D dalam Penemuan Bukan Berasaskan Sumber'},
-    {code:'418',label:'Elaun Modal Dipercepatkan'}
+    {code:'401',label:'Accelerated Capital Allowance'},
+    {code:'402',label:'Industrial Building Allowance'},
+    {code:'403',label:'Approved Service Project'},
+    {code:'404',label:'Exemption under subsection 127(3A)'},
+    {code:'405',label:'Exemption by Ministerial Direction'},
+    {code:'406',label:'Reinvestment Allowance'},
+    {code:'407',label:'Public Infrastructure Allowance'},
+    {code:'408',label:'Increased Export Allowance for Service Companies'},
+    {code:'409',label:'Pre-package Incentive under Promotion of Investments Act 1986'},
+    {code:'410',label:'Tax Exemption for Increased Export'},
+    {code:'411',label:'Provident Fund Allowance'},
+    {code:'412',label:'Basis Period Incentive'},
+    {code:'413',label:'Schedule 7A Allowance'},
+    {code:'414',label:'Schedule 7B Allowance'},
+    {code:'415',label:'Industrial Building Allowance'},
+    {code:'416',label:'Commercialisation of Resource-Based R&D Findings Incentive'},
+    {code:'417',label:'Commercialisation of Non-Resource-Based R&D Findings Incentive'},
+    {code:'418',label:'Accelerated Capital Allowance'}
   ];
 }
 function taxIncentiveLabelForCode(code){
