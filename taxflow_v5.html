@@ -8533,12 +8533,12 @@ function lgExtractRows(raw,commit){
     if(commit) LG_TRANSACTION_ROWS=txRows;
 
     acctMap.forEach(g=>{
-      const lyBal=g.bf, tyBal=g.lastBal!=null?g.lastBal:(lyBal+g.drTotal-g.crTotal);
-      const ly=lgSplitDrCr(lyBal);
-      rows.push({code:g.code,name:g.name,bal:tyBal,tyBal,dr:g.drTotal,cr:g.crTotal,
-                 tyDr:g.drTotal,tyCr:g.crTotal,lyBal,lyDr:ly.dr,lyCr:ly.cr,
+      const lyBal=g.bf, tyBal=lgGroupClosingBalance(g,lyBal);
+      const ly=lgSplitDrCr(lyBal), ty=lgSplitDrCr(tyBal);
+      rows.push(lgNormalizeAccountRow({code:g.code,name:g.name,bal:tyBal,tyBal,dr:ty.dr,cr:ty.cr,
+                 tyDr:ty.dr,tyCr:ty.cr,lyBal,lyDr:ly.dr,lyCr:ly.cr,
                  movementDr:g.drTotal,movementCr:g.crTotal,
-                 lines:g.transactions.length,transactions:g.transactions});
+                 lines:g.transactions.length,transactions:g.transactions}));
     });
     return {rows,txRows,headers};
   }
@@ -8580,9 +8580,9 @@ function lgExtractRows(raw,commit){
     }
     if(commit) LG_TRANSACTION_ROWS=txRows;
     grouped.forEach(g=>{
-      const lyBal=g.bf,tyBal=g.lastBal!=null?g.lastBal:(lyBal+g.drTotal-g.crTotal);
-      const ly=lgSplitDrCr(lyBal);
-      rows.push({code:g.code,name:g.name,bal:tyBal,tyBal,dr:g.drTotal,cr:g.crTotal,tyDr:g.drTotal,tyCr:g.crTotal,lyBal,lyDr:ly.dr,lyCr:ly.cr,movementDr:g.drTotal,movementCr:g.crTotal,lines:g.transactions.length,transactions:g.transactions});
+      const lyBal=g.bf,tyBal=lgGroupClosingBalance(g,lyBal);
+      const ly=lgSplitDrCr(lyBal),ty=lgSplitDrCr(tyBal);
+      rows.push(lgNormalizeAccountRow({code:g.code,name:g.name,bal:tyBal,tyBal,dr:ty.dr,cr:ty.cr,tyDr:ty.dr,tyCr:ty.cr,lyBal,lyDr:ly.dr,lyCr:ly.cr,movementDr:g.drTotal,movementCr:g.crTotal,lines:g.transactions.length,transactions:g.transactions}));
     });
     return {rows,txRows,headers};
   }
@@ -8621,6 +8621,28 @@ function lgBalanceNum(v){
   if(/\bcr\b/i.test(raw)&&n>0) return -n;
   if(/\bdr\b/i.test(raw)&&n<0) return Math.abs(n);
   return n;
+}
+function lgRoundMoney(n){return Math.round((Number(n)||0)*100)/100;}
+function lgGroupClosingBalance(g,lyBal){
+  const calc=lgRoundMoney((Number(lyBal)||0)+Number(g?.drTotal||0)-Number(g?.crTotal||0));
+  const last=Number(g?.lastBal);
+  if(Math.abs(calc)<0.01) return 0;
+  if(Number.isFinite(last)&&Math.abs(last-calc)<0.01) return lgRoundMoney(last);
+  return calc;
+}
+function lgNormalizeAccountRow(r){
+  if(!r) return r;
+  const lyBal=Number(r.lyBal||0);
+  const movementDr=Number(r.movementDr??r.dr??0);
+  const movementCr=Number(r.movementCr??r.cr??0);
+  let tyBal=Number(r.tyBal??r.bal);
+  const calc=lgRoundMoney(lyBal+movementDr-movementCr);
+  const hasBothClosing=Number(r.tyDr||0)>0&&Number(r.tyCr||0)>0;
+  if(!Number.isFinite(tyBal)||Math.abs(calc)<0.01||hasBothClosing) tyBal=calc;
+  tyBal=lgRoundMoney(tyBal);
+  if(Math.abs(tyBal)<0.01) tyBal=0;
+  const ty=lgSplitDrCr(tyBal);
+  return {...r,bal:tyBal,tyBal,dr:ty.dr,cr:ty.cr,tyDr:ty.dr,tyCr:ty.cr,movementDr,movementCr};
 }
 function lgSplitDrCr(balance){
   const n=Number(balance)||0;
@@ -8870,6 +8892,8 @@ function lgMultiClear(){
 }
 
 function lgRenderTable(rows){
+  rows=(rows||[]).map(lgNormalizeAccountRow);
+  if(rows.length===lgRows.length) lgRows=rows;
   const f0=n=>Math.abs(n).toLocaleString('en-MY');
   const f2=n=>Math.abs(Number(n)||0).toLocaleString('en-MY',{minimumFractionDigits:2,maximumFractionDigits:2});
   const total=rows.length;
@@ -9124,6 +9148,7 @@ function lgShowArchives(){
 
 async function lgConfirm(){
   if(!lgRows.length){showNotif('error','❌','No data to post');return;}
+  lgRows=lgRows.map(lgNormalizeAccountRow);
 
   // Save PDF + Excel to local server archive
   try {
@@ -9719,7 +9744,7 @@ function fsTaxTreat(name){
   return malaysiaAuditAIMap('',name,0).treat;
 }
 function fsTotalDrCr(rows){
-  return (rows||[]).reduce((a,r)=>{
+  return (rows||[]).map(lgNormalizeAccountRow).reduce((a,r)=>{
     a.dr+=Number((r.tyDr??r.dr)||0);
     a.cr+=Number((r.tyCr??r.cr)||0);
     return a;
@@ -9743,7 +9768,9 @@ function fsSyncRowsFromMappings(rows){
   return rows;
 }
 function fsBuildRows(force=false){
-  const src=window._lgConfirmedRows||lgRows||[];
+  const src=(window._lgConfirmedRows||lgRows||[]).map(lgNormalizeAccountRow);
+  if(window._lgConfirmedRows) window._lgConfirmedRows=src;
+  else lgRows=src;
   if(!force&&window._fsRows&&window._fsRows.length===src.length){
     const savedTot=fsTotalDrCr(window._fsRows), srcTot=fsTotalDrCr(src);
     const totalsMatch=Math.abs(savedTot.dr-srcTot.dr)<.01&&Math.abs(savedTot.cr-srcTot.cr)<.01;
