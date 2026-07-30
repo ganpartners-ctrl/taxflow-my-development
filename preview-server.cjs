@@ -51,7 +51,7 @@ function readBody(req) {
   });
 }
 
-function requestBuffer(target, options = {}, body) {
+function requestBuffer(target, options = {}, body, timeoutMs = 60000) {
   return new Promise((resolve, reject) => {
     const url = new URL(target);
     const client = url.protocol === "https:" ? https : http;
@@ -63,8 +63,12 @@ function requestBuffer(target, options = {}, body) {
         headers: upstreamRes.headers,
         body: Buffer.concat(chunks),
       }));
+      upstreamRes.on("error", reject);
     });
     upstream.on("error", reject);
+    upstream.setTimeout(timeoutMs, () => {
+      upstream.destroy(new Error(`Upstream request to ${url.origin} timed out after ${Math.round(timeoutMs / 1000)}s -- the server may be down or unreachable from this network.`));
+    });
     if (body) upstream.write(body);
     upstream.end();
   });
@@ -183,7 +187,7 @@ async function handleConvert(req, res, reqUrl) {
       "Content-Type": multipart.contentType,
       "Content-Length": multipart.body.length,
     },
-  }, multipart.body);
+  }, multipart.body, 180000);
 
   const contentType = String(upstreamResponse.headers["content-type"] || "");
   cors(res);

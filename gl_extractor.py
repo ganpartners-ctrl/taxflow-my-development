@@ -14,6 +14,7 @@ Requirements:
 import sys, re, os
 from datetime import datetime
 from collections import defaultdict
+from multiprocessing import Pool, cpu_count
 
 try:
     import pdfplumber
@@ -154,15 +155,55 @@ def is_num(s):
 # ─────────────────────────────────────────────
 #  EXTRACT
 # ─────────────────────────────────────────────
+def _extract_page_words(args):
+    """
+    Runs in a worker process: opens the PDF independently (pdfplumber Page
+    objects aren't picklable across processes) and extracts just one page's
+    words. This is the part profiling showed as ~100% of gl_extractor's
+    runtime, and it has no dependency on any other page, so it's safe to
+    run in parallel. Returns (page_number, list-of-word-dicts).
+    """
+    pdf_path, pg_no = args
+    with pdfplumber.open(pdf_path) as pdf:
+        page = pdf.pages[pg_no - 1]
+        return pg_no, page.extract_words(x_tolerance=3, y_tolerance=3)
+
+
 def extract_pdf(pdf_path):
     rows = []
     cur_code = cur_name = ''
     debit_x = credit_x = balance_x = None   # column x-positions from header
 
-    with pdfplumber.open(pdf_path) as pdf:
-        print(f"  Pages: {len(pdf.pages)}")
-        for pg_no, page in enumerate(pdf.pages, 1):
-            words = page.extract_words(x_tolerance=3, y_tolerance=3)
+    worker_count = max(1, min(cpu_count(), 8))
+    page_words = {}
+    page_count = None
+
+    if worker_count > 1:
+        with pdfplumber.open(pdf_path) as pdf:
+            page_count = len(pdf.pages)
+        print(f"  Pages: {page_count}")
+        if page_count > 1:
+            try:
+                with Pool(min(worker_count, page_count)) as pool:
+                    for pg_no, words in pool.imap_unordered(_extract_page_words, [(pdf_path, i) for i in range(1, page_count + 1)]):
+                        page_words[pg_no] = words
+            except Exception as e:
+                # Fall back to sequential extraction if multiprocessing fails
+                # for any reason (e.g. restricted environment) -- correctness
+                # over speed.
+                print(f"  (parallel extraction unavailable, using single process: {e})")
+                page_words = {}
+
+    if not page_words:
+        with pdfplumber.open(pdf_path) as pdf:
+            if page_count is None:
+                page_count = len(pdf.pages)
+                print(f"  Pages: {page_count}")
+            for pg_no, page in enumerate(pdf.pages, 1):
+                page_words[pg_no] = page.extract_words(x_tolerance=3, y_tolerance=3)
+
+    for pg_no in range(1, page_count + 1):
+            words = page_words.get(pg_no) or []
             if not words: continue
 
             # Group into lines
@@ -280,17 +321,20 @@ def _tx(ws, txts, code, name, pg, debit_x, credit_x, balance_x):
         elif debit_x and abs(x - debit_x) < 25:
             dr = abs(val) if val else None
 
-    # Fallback if column positions unknown: last=bal, second-last=cr or dr
+    # If column positions could not be matched with confidence, do NOT
+    # silently guess which side (debit or credit) the amount belongs on --
+    # a wrong guess here can quietly corrupt an account's balance while
+    # still passing the account-level reconciliation check (which only
+    # verifies the account's total against its own printed closing figure,
+    # not that individual amounts landed on the correct side). Flag these
+    # rows as uncertain instead so they're never silently treated as OK.
+    uncertain = False
     if bal is None and num_ws:
         bal = num_ws[-1][1]
     if dr is None and cr is None and len(num_ws) >= 2:
         val2 = num_ws[-2][1]
         if val2 is not None:
-            # Can't tell dr vs cr without positions; use balance change
-            if bal is not None:
-                prev_bal = bal - (-val2)   # if credit: prev = bal + val2
-                # naive: assign to cr (will be corrected by reconcile)
-                cr = abs(val2)
+            uncertain = True
 
     # Text fields after skipping the date word
     txt_only = [w for w in txt_ws if w['x0'] > ws[0]['x0']]
@@ -320,11 +364,13 @@ def _tx(ws, txts, code, name, pg, debit_x, credit_x, balance_x):
         txt_only  = [w for w in txt_only if w not in tax_ws]
 
     desc = ' '.join(w['text'] for w in txt_only)
+    if uncertain:
+        desc = (desc + ' [UNCERTAIN: Dr/Cr side not confidently detected -- verify against source PDF]').strip()
 
     return dict(code=code, name=name, page=pg,
                 date=txts[0], jrnl=jrnl, ref1=ref1, ref2=ref2,
                 desc=desc, desc2='', tax=tax_found or '',
-                dr=dr, cr=cr, bal=bal,
+                dr=dr, cr=cr, bal=bal, uncertain=uncertain,
                 is_hdr=False, is_bf=False, is_tot=False)
 
 
@@ -444,9 +490,14 @@ def write_excel(rows, recon, out_path):
 
         # Balance check
         if not r['is_bf'] and not r['is_tot']:
-            ok_str = '✅' if ok_acc else '⚠'
-            c15 = ws.cell(row_no, 15, ok_str)
-            c15.font = font(color=GN if ok_acc else AM, bold=True)
+            if r.get('uncertain'):
+                ok_str = '⚠ REVIEW'
+                c15 = ws.cell(row_no, 15, ok_str)
+                c15.font = font(color=AM, bold=True)
+            else:
+                ok_str = '✅' if ok_acc else '⚠'
+                c15 = ws.cell(row_no, 15, ok_str)
+                c15.font = font(color=GN if ok_acc else AM, bold=True)
             c15.alignment = align('center')
 
         row_no += 1
