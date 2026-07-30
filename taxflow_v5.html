@@ -1,4 +1,4 @@
-﻿<!DOCTYPE html>
+<!DOCTYPE html>
 <html lang="en" data-theme="light">
 <head>
 <meta charset="UTF-8">
@@ -1484,6 +1484,157 @@ let lgTableRenderLimit=1000; // rendered DOM rows cap -- see lgRenderTable
 let TB_SORT_STATE={col:null,dir:'asc'};
 let TB_COLUMN_FILTERS={}; // {columnKey: Set(of allowed values)} -- absent/empty Set means no filter on that column
 let TB_OPEN_MENU=null;
+// ═══════════════════════════════════════════════════════════════════
+// TAX RULINGS & INCENTIVES REGISTRY
+// ═══════════════════════════════════════════════════════════════════
+// A structured, extensible knowledge base of Malaysian tax treatments --
+// capital allowance special categories, investment incentives, expense
+// restrictions, and special deductions. Each entry captures: what it is,
+// how to detect it from an account name, the tax treatment, the
+// presentation format, what to ask the client, what supporting documents
+// are needed, and (for time-limited incentives) the eligibility period.
+//
+// IMPORTANT: rates, caps, and qualifying conditions for capital allowance
+// categories and investment incentives are set or amended by the annual
+// Budget / Finance Act and by specific P.U.(A) Orders -- they are NOT
+// static. Every entry below is flagged with "verifyCurrentRate: true"
+// where this applies; treat the figures shown as a starting reference
+// point to confirm against the applicable YA's legislation, not as a
+// permanently fixed rule the system enforces silently.
+const TAX_RULINGS_REGISTRY=[
+  {
+    id:'motor_vehicle_private',
+    name:'Motor Vehicle Capital Allowance Restriction',
+    category:'capital_allowance',
+    citation:'Public Ruling / P.U.(A) 214/2020 -- QE restriction for passenger motor vehicles',
+    detectKeywords:/\b(motor vehicle|car|proton|perodua|toyota|honda|nissan|mazda|hyundai|kia|bmw|mercedes|audi|volkswagen|ford|mitsubishi|suzuki|isuzu|range rover|land rover)\b/i,
+    excludeKeywords:/\b(lorry|truck|van|pickup|pick-up|forklift|excavator|bus|goods vehicle|commercial vehicle)\b/i,
+    treatment:'Private passenger vehicle QE capped: RM100,000 (new, cost \u2264RM150,000) or RM50,000 (new >RM150,000, or any used vehicle). Commercial vehicles are not restricted.',
+    presentationNote:'Show Original Cost and restricted Qualifying Expenditure as separate columns in the CA schedule so the restriction is visible, not just the net figure.',
+    queryQuestions:['Is this vehicle used exclusively for business, or is there private use by a director/employee?','Was the vehicle purchased new or used?','What is the exact purchase cost per the invoice/sale and purchase agreement?'],
+    supportingDocs:['Sale and purchase agreement / invoice','Registration card (proof of new vs used, first registration date)','HP agreement if financed'],
+    eligibilityPeriod:{type:'per-asset',description:'Applies for the life of the asset (affects QE base for all subsequent years\u2019 AA claims), not a separate time-limited incentive.'},
+    verifyCurrentRate:true,
+    requiresApproval:false,
+  },
+  {
+    id:'industrial_building_allowance',
+    name:'Industrial Building Allowance (Elaun Bangunan Industri)',
+    category:'capital_allowance',
+    citation:'Schedule 3, Part 3, Income Tax Act 1967 -- Industrial Building Allowance',
+    detectKeywords:/\b(factory|warehouse|industrial building|godown|store\s*house)\b/i,
+    excludeKeywords:/\b(shop|office|retail)\b/i,
+    treatment:'IA and AA on qualifying industrial building expenditure -- typically 10% IA / 3% AA for standard qualifying buildings (some categories carry different rates, e.g. certain approved facilities). The building must be used for a qualifying purpose (manufacturing, approved warehouse, approved research, etc.), not merely owned by the business.',
+    presentationNote:'Show as a distinct CA category, separate from Plant & Machinery -- do not merge with general Property/Building unless confirmed non-qualifying (in which case no CA at all, matching how freehold land/non-qualifying buildings are excluded in the reference schedule).',
+    queryQuestions:['What is this building actually used for (confirm it is a qualifying industrial use, not office/retail/residential)?','Was the building constructed or purchased, and is a Qualifying Building Expenditure (QBE) breakdown available (construction cost, excluding land)?','Is there a Certificate of Fitness / CCC confirming the building\u2019s completion date, for determining when the allowance period starts?'],
+    supportingDocs:['Sale and purchase agreement or construction contract','QBE cost breakdown (land cost must be excluded)','Certificate of Completion and Compliance (CCC)','Evidence of qualifying use (e.g. factory license, business registration showing manufacturing activity)'],
+    eligibilityPeriod:{type:'per-asset',description:'Claimed annually over the building\u2019s qualifying life until fully written off (no separate time cap beyond full IA+AA absorption); confirm the building continues to be used for a qualifying purpose each year.'},
+    verifyCurrentRate:true,
+    requiresApproval:false,
+  },
+  {
+    id:'small_value_asset',
+    name:'Small Value Asset -- 100% Capital Allowance',
+    category:'capital_allowance',
+    citation:'Income Tax (Qualifying Plant Allowances)(Small Value Assets) Rules -- SME threshold typically higher',
+    detectKeywords:/\b(small value asset)\b/i,
+    treatment:'100% capital allowance in the year of purchase for qualifying small value assets. General cap is RM2,000 per asset with a RM20,000 total annual cap; the total cap does not apply to companies qualifying as SMEs (confirm SME status for the YA).',
+    presentationNote:'List each qualifying small-value asset individually with its own 100% write-off, not lumped into a general Plant & Machinery pool.',
+    queryQuestions:['Does the company qualify as an SME for this YA (paid-up capital \u2264RM2.5 million and gross income threshold)? This affects whether the RM20,000 total cap applies.','Is each item genuinely under the per-asset cost threshold, or has an invoice been split to stay under it?'],
+    supportingDocs:['Purchase invoices for each item claimed','SME status confirmation (paid-up capital, group structure) if relying on the SME exception to the total cap'],
+    eligibilityPeriod:{type:'per-asset',description:'Fully written off in the year of purchase -- one-off, not a multi-year claim.'},
+    verifyCurrentRate:true,
+    requiresApproval:false,
+  },
+  {
+    id:'accelerated_capital_allowance_ict',
+    name:'Accelerated Capital Allowance -- ICT Equipment / Automation / Digitalisation',
+    category:'capital_allowance',
+    citation:'Specific P.U.(A) Order for the relevant YA (varies by Budget -- confirm the Order covering the year of purchase)',
+    detectKeywords:/\b(automation|robotic|digitalisation|digitalization|ict equipment|computer software|cloud)\b/i,
+    treatment:'Accelerated write-off (commonly 20% IA / 40% AA, i.e. fully written off over 3 years, though the exact rate depends on the specific P.U.(A) Order in force for the year of purchase) for qualifying ICT/automation/digitalisation expenditure.',
+    presentationNote:'Show ACA-category assets as their own line, citing the specific P.U.(A) Order relied on -- do not assume the same rate applies across different YAs without checking whether the relevant Order was still in effect.',
+    queryQuestions:['What specific P.U.(A) Order is being relied on for this claim, and was it in force for the year this expenditure was incurred?','Does the equipment/software meet the Order\u2019s specific qualifying description (not all ICT spend automatically qualifies)?','Has the company already claimed ACA on similar prior-year expenditure -- confirm consistency.'],
+    supportingDocs:['Purchase invoice/contract with description matching the qualifying category','Any required certification (e.g. from MIDA or the relevant agency, if the specific incentive requires it)'],
+    eligibilityPeriod:{type:'time-limited',description:'Only applies to expenditure incurred within the period the specific P.U.(A) Order is in force -- confirm the exact start/end dates for the Order being relied on.'},
+    verifyCurrentRate:true,
+    requiresApproval:false,
+  },
+  {
+    id:'pioneer_status',
+    name:'Pioneer Status',
+    category:'incentive',
+    citation:'Promotion of Investments Act 1986 (PIA 1986)',
+    detectKeywords:/\bpioneer status\b|\bpioneer (business|income)\b/i,
+    treatment:'Partial (commonly 70%, though some strategic/high-value activities qualify for 100%) exemption of statutory income from the pioneer business for the tax relief period. The company must keep SEPARATE accounts for pioneer and non-pioneer business if both exist, since only pioneer statutory income is exempt.',
+    presentationNote:'Statutory income must be split between pioneer and non-pioneer sources in the tax computation, with the exempt portion clearly shown separately from taxable statutory income -- do not net them into one figure.',
+    queryQuestions:['Has MIDA approval for Pioneer Status actually been obtained -- what is the approval reference number and date?','What is the approved "Production Day" (the date the tax relief period starts)?','What is the approved exemption percentage (70% or 100%) per the approval letter?','Does the company have both pioneer and non-pioneer business activities requiring separate accounts?'],
+    supportingDocs:['MIDA Pioneer Status approval letter','Production Day confirmation','Separate management accounts for pioneer vs non-pioneer business (if applicable)'],
+    eligibilityPeriod:{type:'company-level',years:5,description:'Standard relief period is 5 years from Production Day, extendable up to 10 years for certain promoted activities -- confirm the exact period stated in the MIDA approval letter, since it is not automatically 5 years for every case.'},
+    verifyCurrentRate:true,
+    requiresApproval:true,
+  },
+  {
+    id:'reinvestment_allowance',
+    name:'Reinvestment Allowance (RA)',
+    category:'incentive',
+    citation:'Schedule 7A, Income Tax Act 1967',
+    detectKeywords:/\breinvestment allowance\b|\bRA claim\b/i,
+    treatment:'Allowance of 60% of qualifying capital expenditure (on expansion, modernisation, automation, or diversification of a qualifying manufacturing/agricultural project), set off against 70% of statutory income for the year (some qualifying cases may use a different offset percentage -- confirm). Unutilised RA can be carried forward. No prior approval needed to claim (self-assessed), but strict qualifying conditions and 15-year eligibility window apply.',
+    presentationNote:'Show as a distinct deduction line after Adjusted Business Income, separate from ordinary capital allowance -- RA is an allowance against income, not a CA schedule item.',
+    queryQuestions:['Is the company in manufacturing or an approved agricultural activity, and is the reinvestment for a qualifying purpose (expansion, modernisation, automation, or diversification)?','Which year of the 15-year eligibility window is this claim for (RA is only available for a company\u2019s first 15 consecutive YAs of being in a qualifying business, or 15 years from first RA claim, depending on when the company commenced -- confirm the applicable rule for this company\u2019s situation)?','Has the company maintained separate records for the qualifying project\u2019s capital expenditure?','Has the asset been disposed of within the required holding period (disposal within 2 years can trigger clawback)?'],
+    supportingDocs:['Capital expenditure invoices/contracts for the qualifying project','Evidence the expenditure is for expansion/modernisation/automation/diversification (not mere replacement)','Prior years\u2019 RA claim history (to track the 15-year window and cumulative claims)'],
+    eligibilityPeriod:{type:'company-level',years:15,description:'Available for a maximum of 15 consecutive YAs -- track from the company\u2019s qualifying start year, since exceeding this window means the claim is no longer available regardless of continued reinvestment.'},
+    verifyCurrentRate:true,
+    requiresApproval:false,
+  },
+  {
+    id:'investment_tax_allowance',
+    name:'Investment Tax Allowance (ITA)',
+    category:'incentive',
+    citation:'Promotion of Investments Act 1986 (PIA 1986)',
+    detectKeywords:/\binvestment tax allowance\b|\bITA claim\b/i,
+    treatment:'Allowance of 60-100% (per the specific approval) of qualifying capital expenditure incurred within 5 years of approval, set off against 70-100% of statutory income for the year. Alternative to Pioneer Status -- a company typically cannot claim both for the same promoted activity.',
+    presentationNote:'Show as a distinct deduction line, separate from ordinary capital allowance, similar to RA -- and confirm Pioneer Status has not also been claimed for the same activity (mutual exclusivity).',
+    queryQuestions:['Has MIDA approval for ITA actually been obtained -- what is the approval reference, approved percentage, and approved period?','Is the qualifying capital expenditure within the 5-year window stated in the approval?','Has the company also claimed Pioneer Status for the same promoted activity (these are generally mutually exclusive)?'],
+    supportingDocs:['MIDA ITA approval letter','Qualifying capital expenditure invoices/contracts within the approved period'],
+    eligibilityPeriod:{type:'company-level',years:5,description:'Qualifying capital expenditure must be incurred within 5 years from the date of approval -- confirm the exact window from the MIDA approval letter.'},
+    verifyCurrentRate:true,
+    requiresApproval:true,
+  },
+  {
+    id:'entertainment_restriction',
+    name:'Entertainment Expense Restriction',
+    category:'restriction',
+    citation:'Section 39(1)(l), Income Tax Act 1967',
+    detectKeywords:/\bentertainment\b/i,
+    treatment:'50% of entertainment expense is disallowed by default, UNLESS it falls within a specific exception (e.g. entertainment wholly related to sales, provided to employees, or of a promotional nature to the public) in which case it may be 100% allowable -- confirm which category applies rather than assuming the default 50%.',
+    presentationNote:'Show gross entertainment expense with the disallowed portion and the specific exception relied on (if any) clearly stated, not just a flat 50% applied without explanation.',
+    queryQuestions:['Does any portion of this entertainment expense fall within a fully-allowable exception (e.g. entertainment related wholly to sales, or provided to employees at a dinner/annual function)?','Is there a breakdown available distinguishing client entertainment from staff-related entertainment?'],
+    supportingDocs:['Entertainment expense breakdown/listing with purpose noted per item','Supporting invoices/receipts for larger items'],
+    eligibilityPeriod:{type:'annual',description:'Assessed fresh each YA based on that year\u2019s entertainment expenditure -- not a multi-year tracked incentive.'},
+    verifyCurrentRate:false,
+    requiresApproval:false,
+  },
+  {
+    id:'audit_secretarial_tax_fee_deduction',
+    name:'Audit Fee / Secretarial Fee / Tax Filing Fee Deduction',
+    category:'deduction',
+    citation:'Income Tax (Deduction for Expenses in relation to Secretarial Fee and Tax Filing Fee) Rules -- combined RM15,000 cap per YA (current rule, YA2020 onwards)',
+    detectKeywords:/\b(audit fee|secretarial fee|tax fee|tax agent fee|tax filing fee)\b/i,
+    treatment:'Audit fee is deductible in full as a normal business expense. Secretarial fee and tax filing fee are deductible subject to a COMBINED cap of RM15,000 per YA (current rule -- confirm this has not been amended in a later Budget).',
+    presentationNote:'Show audit fee as an ordinary deduction; show secretarial + tax filing fee combined against the RM15,000 cap explicitly, so it is clear if the cap has been exceeded (excess is disallowed).',
+    queryQuestions:['What is the combined secretarial fee and tax filing fee for this YA -- does it exceed RM15,000?'],
+    supportingDocs:['Audit fee invoice','Secretarial fee invoice(s)','Tax agent fee invoice(s)'],
+    eligibilityPeriod:{type:'annual',description:'Assessed fresh each YA -- the RM15,000 cap resets annually, it does not carry forward.'},
+    verifyCurrentRate:true,
+    requiresApproval:false,
+  },
+];
+function taxRulingsFindMatch(name){
+  const n=String(name||'');
+  return TAX_RULINGS_REGISTRY.filter(rule=>rule.detectKeywords.test(n)&&(!rule.excludeKeywords||!rule.excludeKeywords.test(n)));
+}
 const TB_SUBCATEGORY_DEFAULT={
   'Current Asset':['Trade Debtors','Other Debtors','Deposits & Prepayments','Cash and Cash Equivalent','Inventories'],
   'Current Liability':['Trade Creditors','Other Creditors','Provision / Accrual','Provision for Taxation','HP Creditor (Short Term)','Loan (Short Term)'],
@@ -5910,6 +6061,7 @@ function renderMapping(){
         ${mmTh(tableId,'treat','Treatment',110)}
         ${mmTh(tableId,'schedule','Schedule',100)}
         <th style="min-width:60px" title="Financial statement note reference">Note</th>
+        <th style="min-width:100px" title="Applicable tax rulings/incentives detected from the account name">Ruling</th>
         ${fsBusinessList().map(b=>`<th style="min-width:100px">${tfEsc(b.label)} RM</th>`).join('')}
         ${mmTh(tableId,'wp','WP',70)}
         ${mmTh(tableId,'query','Query',70)}
@@ -5946,6 +6098,7 @@ function renderMapping(){
   </select>
 </td>
       <td onclick="event.stopPropagation()" style="text-align:center">${m.schedule?`<span class="badge b-blue" style="cursor:pointer" title="Click to review or change note numbering" onclick="openNoteRefSetup('${tfEsc(m.schedule).replace(/'/g,"\\'")}')">${NOTE_REF_STYLE==='alpha'?'':'Note '}${tfEsc(noteRefFor(m.schedule))}</span>`:'<span style="color:var(--t3);font-size:10px">—</span>'}</td>
+      <td onclick="event.stopPropagation()" style="text-align:center">${(m.rulings&&m.rulings.length)?m.rulings.map(rule=>`<span class="badge ${rule.requiresApproval?'b-amber':'b-purple'}" style="cursor:pointer;margin:1px" title="${tfEsc(rule.name)}" onclick="openRulingDetail('${rule.id}','${tfEsc(m.code)}')">${tfEsc(rule.name.length>22?rule.name.slice(0,20)+'\u2026':rule.name)}</span>`).join(''):'<span style="color:var(--t3);font-size:10px">—</span>'}</td>
       ${bizList.map(b=>`<td class="r" onclick="event.stopPropagation()"><input type="number" step="0.01" value="${alloc[b.key]!==''&&alloc[b.key]!=null?Number(alloc[b.key]).toFixed(2):''}" placeholder="-" style="width:88px;text-align:right;padding:3px 5px;font-size:10px;border:1px solid var(--line2);border-radius:4px;background:var(--bg2);font-family:'IBM Plex Mono',monospace" onchange="fsSetBizAlloc('${m.idx}','${tfEsc(b.key)}',this.value);renderMapping()"></td>`).join('')}
       <td>${posted?'<span class="badge b-green">Posted</span>':'<span class="badge b-gray">Not posted</span>'}</td>
       <td>${m.query?'<span class="badge b-amber">Required</span>':'<span class="badge b-blue">Optional</span>'}</td>
@@ -6311,7 +6464,7 @@ function mapUpdateField(code,field,value){
   mapLearnApply(saved.code,saved.name,learned);
   tfSaveState();
   showNotif('success','Mapping learned','Saved '+saved.code+' for this client and similar code families');
-  renderMapping();
+  tfRefreshAllSchedules();
 }
 function mapAllAccounts(){
   const ledgerRows=[
@@ -8693,12 +8846,12 @@ function lgExtractRows(raw,commit){
     if(commit) LG_TRANSACTION_ROWS=txRows;
 
     acctMap.forEach(g=>{
-      const lyBal=g.bf, tyBal=lgGroupClosingBalance(g,lyBal);
-      const ly=lgSplitDrCr(lyBal), ty=lgSplitDrCr(tyBal);
-      rows.push(lgNormalizeAccountRow({code:g.code,name:g.name,bal:tyBal,tyBal,dr:ty.dr,cr:ty.cr,
-                 tyDr:ty.dr,tyCr:ty.cr,lyBal,lyDr:ly.dr,lyCr:ly.cr,
+      const lyBal=g.bf, tyBal=g.lastBal!=null?g.lastBal:(lyBal+g.drTotal-g.crTotal);
+      const ly=lgSplitDrCr(lyBal);
+      rows.push({code:g.code,name:g.name,bal:tyBal,tyBal,dr:g.drTotal,cr:g.crTotal,
+                 tyDr:g.drTotal,tyCr:g.crTotal,lyBal,lyDr:ly.dr,lyCr:ly.cr,
                  movementDr:g.drTotal,movementCr:g.crTotal,
-                 lines:g.transactions.length,transactions:g.transactions}));
+                 lines:g.transactions.length,transactions:g.transactions});
     });
     return {rows,txRows,headers};
   }
@@ -8740,9 +8893,9 @@ function lgExtractRows(raw,commit){
     }
     if(commit) LG_TRANSACTION_ROWS=txRows;
     grouped.forEach(g=>{
-      const lyBal=g.bf,tyBal=lgGroupClosingBalance(g,lyBal);
-      const ly=lgSplitDrCr(lyBal),ty=lgSplitDrCr(tyBal);
-      rows.push(lgNormalizeAccountRow({code:g.code,name:g.name,bal:tyBal,tyBal,dr:ty.dr,cr:ty.cr,tyDr:ty.dr,tyCr:ty.cr,lyBal,lyDr:ly.dr,lyCr:ly.cr,movementDr:g.drTotal,movementCr:g.crTotal,lines:g.transactions.length,transactions:g.transactions}));
+      const lyBal=g.bf,tyBal=g.lastBal!=null?g.lastBal:(lyBal+g.drTotal-g.crTotal);
+      const ly=lgSplitDrCr(lyBal);
+      rows.push({code:g.code,name:g.name,bal:tyBal,tyBal,dr:g.drTotal,cr:g.crTotal,tyDr:g.drTotal,tyCr:g.crTotal,lyBal,lyDr:ly.dr,lyCr:ly.cr,movementDr:g.drTotal,movementCr:g.crTotal,lines:g.transactions.length,transactions:g.transactions});
     });
     return {rows,txRows,headers};
   }
@@ -8781,28 +8934,6 @@ function lgBalanceNum(v){
   if(/\bcr\b/i.test(raw)&&n>0) return -n;
   if(/\bdr\b/i.test(raw)&&n<0) return Math.abs(n);
   return n;
-}
-function lgRoundMoney(n){return Math.round((Number(n)||0)*100)/100;}
-function lgGroupClosingBalance(g,lyBal){
-  const calc=lgRoundMoney((Number(lyBal)||0)+Number(g?.drTotal||0)-Number(g?.crTotal||0));
-  const last=Number(g?.lastBal);
-  if(Math.abs(calc)<0.01) return 0;
-  if(Number.isFinite(last)&&Math.abs(last-calc)<0.01) return lgRoundMoney(last);
-  return calc;
-}
-function lgNormalizeAccountRow(r){
-  if(!r) return r;
-  const lyBal=Number(r.lyBal||0);
-  const movementDr=Number(r.movementDr??r.dr??0);
-  const movementCr=Number(r.movementCr??r.cr??0);
-  let tyBal=Number(r.tyBal??r.bal);
-  const calc=lgRoundMoney(lyBal+movementDr-movementCr);
-  const hasBothClosing=Number(r.tyDr||0)>0&&Number(r.tyCr||0)>0;
-  if(!Number.isFinite(tyBal)||Math.abs(calc)<0.01||hasBothClosing) tyBal=calc;
-  tyBal=lgRoundMoney(tyBal);
-  if(Math.abs(tyBal)<0.01) tyBal=0;
-  const ty=lgSplitDrCr(tyBal);
-  return {...r,bal:tyBal,tyBal,dr:ty.dr,cr:ty.cr,tyDr:ty.dr,tyCr:ty.cr,movementDr,movementCr};
 }
 function lgSplitDrCr(balance){
   const n=Number(balance)||0;
@@ -9052,8 +9183,6 @@ function lgMultiClear(){
 }
 
 function lgRenderTable(rows){
-  rows=(rows||[]).map(lgNormalizeAccountRow);
-  if(rows.length===lgRows.length) lgRows=rows;
   const f0=n=>Math.abs(n).toLocaleString('en-MY');
   const f2=n=>Math.abs(Number(n)||0).toLocaleString('en-MY',{minimumFractionDigits:2,maximumFractionDigits:2});
   const total=rows.length;
@@ -9308,7 +9437,6 @@ function lgShowArchives(){
 
 async function lgConfirm(){
   if(!lgRows.length){showNotif('error','❌','No data to post');return;}
-  lgRows=lgRows.map(lgNormalizeAccountRow);
 
   // Save PDF + Excel to local server archive
   try {
@@ -9781,6 +9909,7 @@ function malaysiaAuditAIMap(code,name,bal){
     learnSchedulePattern(code,out.classification,out.schedule);
     learnCodePattern(code,out.classification);
   }
+  out.rulings=taxRulingsFindMatch(name);
   return out;
 }
 function learnedCodeClass(code){
@@ -9904,7 +10033,7 @@ function fsTaxTreat(name){
   return malaysiaAuditAIMap('',name,0).treat;
 }
 function fsTotalDrCr(rows){
-  return (rows||[]).map(lgNormalizeAccountRow).reduce((a,r)=>{
+  return (rows||[]).reduce((a,r)=>{
     a.dr+=Number((r.tyDr??r.dr)||0);
     a.cr+=Number((r.tyCr??r.cr)||0);
     return a;
@@ -9928,9 +10057,15 @@ function fsSyncRowsFromMappings(rows){
   return rows;
 }
 function fsBuildRows(force=false){
-  const src=(window._lgConfirmedRows||lgRows||[]).map(lgNormalizeAccountRow);
-  if(window._lgConfirmedRows) window._lgConfirmedRows=src;
-  else lgRows=src;
+  const src=window._lgConfirmedRows||lgRows||[];
+  // Rebuilding from an EMPTY source should never discard existing, real
+  // data -- if there's nothing to rebuild from, keep what's already there
+  // rather than wiping it out. This matters more now that refreshes can be
+  // triggered from more places (AI Mapping edits, business allocation
+  // edits), not just the original ledger-confirmation flow.
+  if(!force&&src.length===0&&window._fsRows&&window._fsRows.length>0){
+    fsSyncRowsFromMappings(window._fsRows);window._fsRows.forEach(r=>{r.classification=fsModelAdjustedClass(r.classification);});fsNormalizeBusinessRows(window._fsRows);return window._fsRows;
+  }
   if(!force&&window._fsRows&&window._fsRows.length===src.length){
     const savedTot=fsTotalDrCr(window._fsRows), srcTot=fsTotalDrCr(src);
     const totalsMatch=Math.abs(savedTot.dr-srcTot.dr)<.01&&Math.abs(savedTot.cr-srcTot.cr)<.01;
@@ -9955,7 +10090,7 @@ function fsBuildRows(force=false){
     const map=malaysiaAuditAIMap(r.code,r.name,bal);
     const key=String(r.code||'')+'|'+String(r.name||'').toLowerCase();
     const old=Object.assign({},previous.get(key)||{},mappedCode.get(String(r.code||''))||{},mappedExact.get(key)||{});
-    return {idx:i+1,code:String(r.code||''),name:String(r.name||''),dr,cr,bal,tyBal:bal,tyDr:dr,tyCr:cr,lyBal,lyDr,lyCr,classification:fsModelAdjustedClass(old.classification||map.classification),taxTreat:old.taxTreat||map.treat,schedule:old.schedule||map.schedule,confidence:old.confidence||map.confidence,query:old.query??map.query,wp:old.wp||map.wp,reason:old.reason||map.reason,confirmed:!!old.confirmed,businessSource:old.businessSource||fsDefaultBusinessSource(r.name),businessManual:!!old.businessManual};
+    return {idx:i+1,code:String(r.code||''),name:String(r.name||''),dr,cr,bal,tyBal:bal,tyDr:dr,tyCr:cr,lyBal,lyDr,lyCr,classification:fsModelAdjustedClass(old.classification||map.classification),taxTreat:old.taxTreat||map.treat,schedule:old.schedule||map.schedule,confidence:old.confidence||map.confidence,query:old.query??map.query,wp:old.wp||map.wp,reason:old.reason||map.reason,confirmed:!!old.confirmed,businessSource:old.businessSource||fsDefaultBusinessSource(r.name),businessManual:!!old.businessManual,rulings:taxRulingsFindMatch(r.name)};
   });
   fsSyncRowsFromMappings(window._fsRows);
   window._fsRows.forEach(r=>{r.classification=fsModelAdjustedClass(r.classification);});
@@ -9967,7 +10102,7 @@ function fsUpdateClass(sel,idx){const r=(window._fsRows||[])[Number(idx)-1];if(r
   // chosen sub-category doesn't belong to the new classification's list,
   // clear it rather than silently keeping a mismatched value.
   if(r.schedule&&!tbSubCategoryOptions(r.classification).includes(r.schedule)) r.schedule='';
-  r.reason='Manual FS classification selected by user. Full mapping learned for this client.';mapLearnApply(r.code,r.name,mapLearnPayload(r,{classification:r.classification}));tfSaveState();renderFinstmt();}}
+  r.reason='Manual FS classification selected by user. Full mapping learned for this client.';mapLearnApply(r.code,r.name,mapLearnPayload(r,{classification:r.classification}));tfSaveState();tfRefreshAllSchedules();}}
 // Same underlying update as fsUpdateClass, but used from the BS/P&L
 // Detailed views specifically: since those are built from the same rows as
 // the Trial Balance, changing a classification here also changes it there.
@@ -9983,7 +10118,7 @@ function fsUpdateClassConfirmed(sel,idx){
   }
   fsUpdateClass(sel,idx);
 }
-function fsUpdateSchedule(sel,idx){const r=(window._fsRows||[])[Number(idx)-1];if(r){r.schedule=sel.value;r.confirmed=true;r.reason='Manual sub-category selected by user. Full mapping learned for this client.';mapLearnApply(r.code,r.name,mapLearnPayload(r,{classification:r.classification,schedule:r.schedule}));if(r.code&&r.classification&&r.schedule) learnSchedulePattern(r.code,r.classification,r.schedule);tfSaveState();renderFinstmt();}}
+function fsUpdateSchedule(sel,idx){const r=(window._fsRows||[])[Number(idx)-1];if(r){r.schedule=sel.value;r.confirmed=true;r.reason='Manual sub-category selected by user. Full mapping learned for this client.';mapLearnApply(r.code,r.name,mapLearnPayload(r,{classification:r.classification,schedule:r.schedule}));if(r.code&&r.classification&&r.schedule) learnSchedulePattern(r.code,r.classification,r.schedule);tfSaveState();tfRefreshAllSchedules();}}
 // Sub-category options, dependent on the top-level classification chosen
 // above. Only the classifications explicitly specified have a defined
 // breakdown; others simply don't show a sub-category dropdown rather than
@@ -10050,7 +10185,7 @@ function fsSetBizAlloc(idx,key,val){
   if(nonZero.length===1){r.businessSource=nonZero[0][0];r.businessManual=true;}
   r.confirmed=true;
   tfSaveState();
-  renderFinstmt();
+  tfRefreshAllSchedules();
 }
 function fsBizMismatch(r, amt){
   const b=r._bizSplit;
@@ -10273,7 +10408,7 @@ function fsExport(){
   }
 }
 function fsBuildMappingRows(rows){
-  return rows.map((r,i)=>({idx:r.idx??(i+1),code:r.code,name:r.name,amt:Math.abs(r.bal),classification:r.classification,src:r.confirmed?'USER':'RULE',treat:r.taxTreat,schedule:r.schedule,reason:r.reason,wp:r.wp,conf:r.confirmed?.99:r.confidence,query:r.query||String(r.taxTreat).includes('Review'),bizAlloc:r.bizAlloc,businessSource:r.businessSource}));
+  return rows.map((r,i)=>({idx:r.idx??(i+1),code:r.code,name:r.name,amt:Math.abs(r.bal),classification:r.classification,src:r.confirmed?'USER':'RULE',treat:r.taxTreat,schedule:r.schedule,reason:r.reason,wp:r.wp,conf:r.confirmed?.99:r.confidence,query:r.query||String(r.taxTreat).includes('Review'),bizAlloc:r.bizAlloc,businessSource:r.businessSource,rulings:r.rulings||[]}));
 }
 function fsSignedAmount(r,year='ty'){
   const dr=year==='ly'?(r.lyDr||0):(r.tyDr||r.dr||0), cr=year==='ly'?(r.lyCr||0):(r.tyCr||r.cr||0);
@@ -10686,11 +10821,62 @@ function fsRowIsBS(r){
     && !/\bp&l\b|profit|loss|revenue|income|cost of sales|operating expense|finance cost|s\.33|s\.39|s\.4/.test(t);
 }
 function fsBSAmount(r,year='ty'){
+  if(year==='ty'&&r._netTyOverride!=null) return r._netTyOverride;
+  if(year==='ly'&&r._netLyOverride!=null) return r._netLyOverride;
   const signed=fsSignedAmount(r,year);
   return (fsIsLiabilityClass(r.classification)||fsIsEquityClass(r.classification))?-signed:signed;
 }
 function fsCurrentProfitForBS(rows,year='ty'){
   return rows.filter(r=>!fsRowIsBS(r)).reduce((s,r)=>s-fsSignedAmount(r,year),0);
+}
+// Strips "accumulated depreciation" / "accum deprn" wording (in its common
+// variants) from an account name, leaving just the asset category --
+// e.g. "Accum. Depreciation - Computer & Equipment" -> "computer equipment",
+// "Computer & Equipment" -> "computer equipment" -- so the two can be
+// matched even though the account names aren't identical.
+function fsAssetCategoryKey(name){
+  return String(name||'')
+    .toLowerCase()
+    .replace(/\b(accumulated|accum\.?)\s*(depreciation|deprn\.?)\s*-?\s*/g,'')
+    .replace(/\bdepreciation\b|\bdeprn\.?\b/g,'')
+    .replace(/[^a-z0-9]+/g,' ')
+    .trim();
+}
+function fsIsAccumDeprRow(r){
+  return /\b(accumulated|accum\.?)\s*(depreciation|deprn\.?)\b|\bdepreciation\b.*\b(c\/f|written|bal|carried)\b/i.test(String(r.name||''))
+    || /contra asset|fa register/i.test(String(r.schedule||''));
+}
+// Groups Fixed Asset rows for BS display: each Accumulated Depreciation
+// account is matched to its cost account by category and combined into one
+// net line (both account names/codes kept for traceability via the note).
+// A depreciation account that can't be matched to any cost account is kept
+// as its own flagged line rather than silently dropped or guessed at.
+function fsNetFixedAssetsForDisplay(nca){
+  const costRows=nca.filter(r=>!fsIsAccumDeprRow(r));
+  const deprRows=nca.filter(r=>fsIsAccumDeprRow(r));
+  const used=new Set();
+  const netted=costRows.map(cost=>{
+    const costKey=fsAssetCategoryKey(cost.name);
+    const match=deprRows.find((d,i)=>!used.has(i)&&fsAssetCategoryKey(d.name)===costKey&&costKey.length>0);
+    if(match){
+      used.add(deprRows.indexOf(match));
+      return {
+        ...cost,
+        _netted:true,
+        _pairedWith:match.name,
+        _costOnly:fsBSAmount(cost,'ty'),
+        _deprOnly:fsBSAmount(match,'ty'),
+        tyDr:undefined,tyCr:undefined,dr:undefined,cr:undefined,
+        bal:fsSignedAmount(cost,'ty')+fsSignedAmount(match,'ty'),
+        lyDr:undefined,lyCr:undefined,
+        _netTyOverride:fsBSAmount(cost,'ty')+fsBSAmount(match,'ty'),
+        _netLyOverride:fsBSAmount(cost,'ly')+fsBSAmount(match,'ly'),
+      };
+    }
+    return cost;
+  });
+  const unmatchedDepr=deprRows.filter((d,i)=>!used.has(i)).map(d=>({...d,_unmatched:true}));
+  return [...netted,...unmatchedDepr];
 }
 function fsStatementLabels(){
   const m=fsStatementModel();
@@ -10741,7 +10927,10 @@ function fsDisplayBSName(r){
   const isRetained=/retained|accumulated.*loss|profit.*loss|reserve/i.test(r.name||'')||fsClassKey(r.classification)==='retained earnings';
   const baseName=(isRetained&&labels.noRetained)?labels.retained:r.name;
   const ref=r.schedule?noteRefFor(r.schedule):'';
-  return ref?`${baseName} <span style="color:var(--t3);font-size:10px;font-weight:400">(${NOTE_REF_STYLE==='alpha'?'':'Note '}${tfEsc(ref)})</span>`:baseName;
+  const refHtml=ref?` <span style="color:var(--t3);font-size:10px;font-weight:400">(${NOTE_REF_STYLE==='alpha'?'':'Note '}${tfEsc(ref)})</span>`:'';
+  const nettedHtml=r._netted?` <span style="color:var(--t3);font-size:10px;font-weight:400">(net of ${tfEsc(r._pairedWith)})</span>`:'';
+  const unmatchedHtml=r._unmatched?` <span class="badge b-amber" style="font-size:9px" title="No matching cost account found -- confirm this is correctly netted">Unmatched depreciation</span>`:'';
+  return `${baseName}${nettedHtml}${refHtml}${unmatchedHtml}`;
 }
 function fsClassOptions(){
   const base=['Revenue','Other Income','Cost of Sales','Operating Expenses','Finance Costs','Tax Expense','Current Asset','Non-Current Asset','Fixed Asset','Current Liability','Non-Current Liability'];
@@ -10968,6 +11157,25 @@ function tbClearColumnFilter(col){
   delete TB_COLUMN_FILTERS[col];
   renderFinstmt();
 }
+// Central refresh: called after ANY user edit that changes an account's
+// classification, treatment, schedule, or business allocation -- since
+// every schedule (TB, P&L, BS, Tax Computation, Business Income Schedule,
+// Analysis of Account, AI Mapping) is derived from the same underlying
+// window._fsRows, a change made in any ONE of them needs to propagate to
+// all the others immediately, not just whichever one the user happened to
+// be looking at. Each call is wrapped individually so a schedule whose tab
+// has never been opened (its DOM doesn't exist yet) can't block the rest
+// from refreshing, and can't turn into an error the user sees.
+function tfRefreshAllSchedules(){
+  const safe=(fn)=>{ try{ if(typeof fn==='function') fn(); }catch(e){ console.warn('[tfRefreshAllSchedules]', e); } };
+  safe(renderFinstmt);
+  safe(buildTC);
+  safe(buildTCSchedules);
+  safe(buildTCSchedulesFull);
+  safe(renderAnalysisOfAccount);
+  safe(renderMapping);
+  safe(renderCASummary);
+}
 function renderFinstmt(){
   const el=document.getElementById('finstmtBody')||document.getElementById('fs-tab-tb');
   if(!el) return;
@@ -11130,6 +11338,7 @@ function renderFinstmt(){
     }).join('');
     const gtot=(items,year)=>items.reduce((s,r)=>s+fsBSAmount(r,year),0);
     const nca=rows.filter(r=>['non current asset','fixed asset','intangible asset'].includes(fsClassKey(r.classification))), ca=rows.filter(r=>fsClassKey(r.classification)==='current asset'), cl=rows.filter(r=>fsClassKey(r.classification)==='current liability'), ncl=rows.filter(r=>fsClassKey(r.classification)==='non current liability'), eqRows=rows.filter(r=>fsIsEquityClass(r.classification));
+    const ncaDisplay=fsNetFixedAssetsForDisplay(nca);
     const bsProfitTy=fsCurrentProfitForBS(rows,'ty'), bsProfitLy=fsCurrentProfitForBS(rows,'ly');
     const totalAssets=gtot(nca,'ty')+gtot(ca,'ty'), totalAssetsLy=gtot(nca,'ly')+gtot(ca,'ly'), totalLiab=gtot(cl,'ty')+gtot(ncl,'ty'), totalLiabLy=gtot(cl,'ly')+gtot(ncl,'ly'), totalEq=gtot(eqRows,'ty')+bsProfitTy, totalEqLy=gtot(eqRows,'ly')+bsProfitLy;
     const bsVarianceTy=totalAssets-(totalLiab+totalEq), bsVarianceLy=totalAssetsLy-(totalLiabLy+totalEqLy);
@@ -11151,7 +11360,7 @@ function renderFinstmt(){
     if(bs) bs.innerHTML=`${fsBusinessToolbar()}<div class="card" style="padding:0;overflow:hidden">${fsStmtHeader(labels.title+' \u2014 Detailed')}
       <div style="padding:10px 14px"><table class="t"><thead><tr><th></th><th>Map To</th><th>Business</th><th class="r">TY RM</th><th class="r">LY RM</th></tr></thead><tbody>
       <tr><td colspan="5" style="font-weight:800;background:var(--bg3)">Assets</td></tr>
-      <tr><td colspan="5" style="font-weight:800;color:var(--blue3)">Non-current assets</td></tr>${groupRows(nca)}
+      <tr><td colspan="5" style="font-weight:800;color:var(--blue3)">Non-current assets</td></tr>${groupRows(ncaDisplay)}
       <tr style="font-weight:800"><td>Total non-current assets</td><td></td><td></td><td class="r m">${fsLineAmount(gtot(nca,'ty'))}</td><td class="r m">${fsLineAmount(gtot(nca,'ly'))}</td></tr>
       <tr><td colspan="5" style="font-weight:800;color:var(--blue3)">Current assets</td></tr>${groupRows(ca)}
       <tr style="font-weight:800"><td>Total current assets</td><td></td><td></td><td class="r m">${fsLineAmount(gtot(ca,'ty'))}</td><td class="r m">${fsLineAmount(gtot(ca,'ly'))}</td></tr>
@@ -14416,7 +14625,7 @@ async function cdbShowConfirmPanel(type, data, ya) {
         <div style="font-size:11px;color:var(--green3);font-weight:600">
           All data saved to ClientDB: ${abs.length} add-backs Â· ${cas.length} CA assets Â· ${hps.length} HP Â· ${disp.length} disposals
         </div>
-        <button onclick="cdbViewRecord('${(data.tinNo||'').replace(/\s/g,'')}','${ya_val}')" 
+        <button onclick="cdbViewRecord('${(data.tinNo||'').replace(/\s/g,'')}','${ya_val}')"
           style="margin-left:auto;background:var(--green);color:#fff;border:none;padding:5px 12px;border-radius:5px;font-size:11px;font-weight:600;cursor:pointer;font-family:'IBM Plex Sans',sans-serif">
           View Full DB Record â†’
         </button>
@@ -14445,7 +14654,8 @@ async function cdbViewRecord(tin, ya) {
 // Page 5 = Summary  |  Pages 6-11 = Detail  |  Page 12 = Disposal
 // Pages 13-16 = HP  |  Appendix I = Reconciliation
 // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-// Motor vehicle capital allowance restriction (current Malaysian rule,
+
+// Motor vehicle capital allowance restriction (current Malaysian rule,
 // P.U.(A) 214/2020 onwards): a PRIVATE passenger vehicle's qualifying
 // expenditure is capped -- RM100,000 if new and costing RM150,000 or
 // less, RM50,000 for a new vehicle costing more than RM150,000 or any
@@ -16670,6 +16880,85 @@ function closeNoteRefSetup(){
   const m=document.getElementById('noteRefSetupModal');
   if(m) m.style.display='none';
 }
+function openRulingDetail(ruleId,code){
+  const rule=TAX_RULINGS_REGISTRY.find(r=>r.id===ruleId);
+  if(!rule) return;
+  const m=document.getElementById('rulingDetailModal');
+  const body=document.getElementById('ruling-detail-body');
+  if(!m||!body) return;
+  const catLabel={capital_allowance:'Capital Allowance',incentive:'Investment Incentive',restriction:'Expense Restriction',deduction:'Special Deduction'}[rule.category]||rule.category;
+  body.innerHTML=`
+    <div style="display:flex;align-items:start;justify-content:space-between;margin-bottom:4px">
+      <div style="font-size:16px;font-weight:700">${tfEsc(rule.name)}</div>
+      <span class="badge ${rule.requiresApproval?'b-amber':'b-purple'}">${catLabel}</span>
+    </div>
+    <div style="font-size:11px;color:var(--t3);margin-bottom:14px">${tfEsc(rule.citation)}${rule.verifyCurrentRate?' \u2014 verify current rate/cap against the applicable Budget/Finance Act for this YA':''}</div>
+    ${code?`<div style="font-size:11px;color:var(--blue3);margin-bottom:12px">Matched on account: ${tfEsc(code)}</div>`:''}
+    <div style="margin-bottom:14px"><div style="font-size:11px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px">Treatment</div><div style="font-size:13px;line-height:1.5">${tfEsc(rule.treatment)}</div></div>
+    <div style="margin-bottom:14px"><div style="font-size:11px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px">Presentation format</div><div style="font-size:13px;line-height:1.5">${tfEsc(rule.presentationNote)}</div></div>
+    <div style="margin-bottom:14px"><div style="font-size:11px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px">Questions to ask the client</div><ul style="margin:0;padding-left:18px;font-size:13px;line-height:1.6">${rule.queryQuestions.map(q=>`<li>${tfEsc(q)}</li>`).join('')}</ul></div>
+    <div style="margin-bottom:14px"><div style="font-size:11px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px">Supporting documents needed</div><ul style="margin:0;padding-left:18px;font-size:13px;line-height:1.6">${rule.supportingDocs.map(d=>`<li>${tfEsc(d)}</li>`).join('')}</ul></div>
+    <div style="padding:10px 12px;background:var(--bg2);border:1px solid var(--line);border-radius:7px">
+      <div style="font-size:11px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px">Eligibility period</div>
+      <div style="font-size:13px">${rule.eligibilityPeriod.years?`Up to <b>${rule.eligibilityPeriod.years} years</b>. `:''}${tfEsc(rule.eligibilityPeriod.description)}</div>
+      ${rule.requiresApproval?`<div style="margin-top:6px;font-size:11px;color:var(--amber3);font-weight:600">\u26a0 Requires prior approval (MIDA) -- do not assume eligibility without a confirmed approval reference.</div>`:''}
+      ${rule.category==='incentive'?`<button class="btn btn-primary btn-sm" style="margin-top:10px" onclick="closeRulingDetail();openIncentiveTracker('${rule.id}')">Register / Track this incentive for ${tfEsc(currentClient?.name||'this client')}</button>`:''}
+    </div>`;
+  m.style.display='flex';
+}
+function closeRulingDetail(){
+  const m=document.getElementById('rulingDetailModal');
+  if(m) m.style.display='none';
+}
+function openIncentiveTracker(ruleId){
+  const rule=TAX_RULINGS_REGISTRY.find(r=>r.id===ruleId);
+  if(!rule||!currentClient) return;
+  currentClient.incentives=currentClient.incentives||[];
+  const m=document.getElementById('rulingDetailModal');
+  const body=document.getElementById('ruling-detail-body');
+  if(!m||!body) return;
+  const existing=currentClient.incentives.filter(inc=>inc.ruleId===ruleId);
+  const thisYA=currentYA?.ya||new Date().getFullYear();
+  body.innerHTML=`
+    <div style="font-size:16px;font-weight:700;margin-bottom:4px">${tfEsc(rule.name)} \u2014 ${tfEsc(currentClient.name)}</div>
+    <div style="font-size:11px;color:var(--t3);margin-bottom:14px">Register the approval details so the eligibility period is tracked automatically each YA.</div>
+    <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px">
+      <div><label class="fl" style="font-size:11px">Approval reference no.</label><input id="inc-ref" class="fi" placeholder="e.g. MIDA/PS/2024/xxxx"></div>
+      <div><label class="fl" style="font-size:11px">Start YA (first eligible year)</label><input id="inc-start" class="fi" type="number" value="${thisYA}"></div>
+      <div><label class="fl" style="font-size:11px">Eligibility period (years)</label><input id="inc-years" class="fi" type="number" value="${rule.eligibilityPeriod.years||5}"></div>
+      <div><label class="fl" style="font-size:11px">Approval date</label><input id="inc-date" class="fi" type="date"></div>
+    </div>
+    <div style="margin-bottom:14px"><label class="fl" style="font-size:11px">Notes</label><textarea id="inc-notes" class="fi" style="width:100%;min-height:50px"></textarea></div>
+    <button class="btn btn-primary btn-sm" onclick="saveIncentiveRegistration('${ruleId}')">Save registration</button>
+    ${existing.length?`<div style="margin-top:18px;border-top:1px solid var(--line);padding-top:14px">
+      <div style="font-size:11px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:.4px;margin-bottom:8px">Already registered for this client</div>
+      ${existing.map((inc,i)=>{
+        const endYA=inc.startYA+inc.years-1;
+        const yearsRemaining=Math.max(0,endYA-thisYA+1);
+        const expired=thisYA>endYA;
+        return `<div style="display:flex;justify-content:space-between;align-items:center;padding:8px 10px;background:var(--bg3);border:1px solid var(--line);border-radius:6px;margin-bottom:6px;font-size:12px">
+          <div><b>${tfEsc(inc.ref||'(no reference)')}</b> \u2014 YA ${inc.startYA} to YA ${endYA}<div style="font-size:10px;color:var(--t3)">${expired?'Expired':`${yearsRemaining} year(s) remaining as of YA ${thisYA}`}</div></div>
+          <span class="badge ${expired?'b-gray':'b-green'}">${expired?'Expired':'Active'}</span>
+        </div>`;
+      }).join('')}
+    </div>`:''}`;
+  m.style.display='flex';
+}
+function saveIncentiveRegistration(ruleId){
+  if(!currentClient) return;
+  const ref=document.getElementById('inc-ref')?.value.trim();
+  const startYA=parseInt(document.getElementById('inc-start')?.value,10);
+  const years=parseInt(document.getElementById('inc-years')?.value,10);
+  const date=document.getElementById('inc-date')?.value;
+  const notes=document.getElementById('inc-notes')?.value.trim();
+  if(!startYA||!years){ showNotif('error','Missing info','Start YA and eligibility period are required'); return; }
+  currentClient.incentives=currentClient.incentives||[];
+  currentClient.incentives.push({ruleId,ref,startYA,years,date,notes,registeredAt:new Date().toISOString()});
+  tfSaveState();
+  addAudit('User','Tax Rulings','Registered '+(TAX_RULINGS_REGISTRY.find(r=>r.id===ruleId)?.name||ruleId)+' for '+currentClient.name+' (YA '+startYA+' to '+(startYA+years-1)+')');
+  showNotif('success','Registered','Incentive tracked -- eligibility period will be checked automatically each YA');
+  openIncentiveTracker(ruleId);
+}
 function setNoteRefStyle(style){
   NOTE_REF_STYLE=style==='alpha'?'alpha':'numeric';
   noteRefSaveSetup();
@@ -17343,6 +17632,15 @@ table.tbl .bal td{background:var(--bld)!important;font-weight:700;}
     <div style="display:flex;gap:8px;justify-content:space-between">
       <button onclick="resetNoteRefSetup()" class="btn btn-ghost btn-sm" style="color:var(--red3)">Reset all to standard order</button>
       <button onclick="closeNoteRefSetup()" class="btn btn-primary btn-sm">Done</button>
+    </div>
+  </div>
+</div>
+
+<div id="rulingDetailModal" style="display:none;position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:9000;align-items:center;justify-content:center;backdrop-filter:blur(4px)">
+  <div style="background:var(--bg1);border:1px solid var(--line2);border-radius:12px;padding:24px;width:640px;max-width:95vw;max-height:85vh;overflow:auto;box-shadow:0 20px 60px rgba(0,0,0,.5)">
+    <div id="ruling-detail-body"></div>
+    <div style="display:flex;justify-content:flex-end;margin-top:16px">
+      <button onclick="closeRulingDetail()" class="btn btn-primary btn-sm">Close</button>
     </div>
   </div>
 </div>
