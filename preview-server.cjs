@@ -90,6 +90,57 @@ function multipartFileBody(fileBuffer, filename, contentType) {
   };
 }
 
+function cleanUploadedFilename(name) {
+  return String(name || "upload.pdf")
+    .replace(/[\\/:*?"<>|]/g, "_")
+    .replace(/\s+/g, " ")
+    .trim() || "upload.pdf";
+}
+
+function extractMultipartFileBody(rawBody, contentType, fallbackFilename) {
+  const match = /boundary=(?:"([^"]+)"|([^;]+))/i.exec(String(contentType || ""));
+  if (!match) return null;
+  const boundary = Buffer.from(`--${match[1] || match[2]}`, "utf8");
+  let cursor = 0;
+  while (cursor < rawBody.length) {
+    const partStart = rawBody.indexOf(boundary, cursor);
+    if (partStart < 0) break;
+    const headerStart = partStart + boundary.length;
+    if (rawBody.slice(headerStart, headerStart + 2).toString() === "--") break;
+    const headerEnd = rawBody.indexOf(Buffer.from("\r\n\r\n"), headerStart);
+    if (headerEnd < 0) break;
+    const headerText = rawBody.slice(headerStart, headerEnd).toString("latin1");
+    const dataStart = headerEnd + 4;
+    const nextBoundary = rawBody.indexOf(boundary, dataStart);
+    if (nextBoundary < 0) break;
+    let dataEnd = nextBoundary;
+    if (rawBody[dataEnd - 2] === 13 && rawBody[dataEnd - 1] === 10) dataEnd -= 2;
+    const disposition = /content-disposition:[^\r\n]*/i.exec(headerText)?.[0] || "";
+    if (/name="file"/i.test(disposition)) {
+      const filename = /filename="([^"]*)"/i.exec(disposition)?.[1] || fallbackFilename;
+      const fileType = /content-type:\s*([^\r\n]+)/i.exec(headerText)?.[1]?.trim() || "application/pdf";
+      return {
+        buffer: rawBody.slice(dataStart, dataEnd),
+        filename: cleanUploadedFilename(filename),
+        contentType: fileType,
+      };
+    }
+    cursor = nextBoundary + boundary.length;
+  }
+  return null;
+}
+
+function requestUploadFile(rawBody, headers, fallbackFilename) {
+  const contentType = headers["content-type"] || "";
+  const multipart = extractMultipartFileBody(rawBody, contentType, fallbackFilename);
+  if (multipart) return multipart;
+  return {
+    buffer: rawBody,
+    filename: cleanUploadedFilename(fallbackFilename),
+    contentType: contentType || "application/pdf",
+  };
+}
+
 function localDownloadUrl(remoteUrl, authorization) {
   const id = Date.now().toString(36) + Math.random().toString(36).slice(2);
   pendingDownloads.set(id, { authorization, remoteUrl, createdAt: Date.now() });
@@ -141,8 +192,10 @@ function runLocalGlExtractor(fileBuffer, filename) {
 }
 
 async function handleConvert(req, res, reqUrl) {
-  const body = await readBody(req);
-  const filename = reqUrl.searchParams.get("filename") || "upload.pdf";
+  const rawBody = await readBody(req);
+  const upload = requestUploadFile(rawBody, req.headers, reqUrl.searchParams.get("filename") || "upload.pdf");
+  const body = upload.buffer;
+  const filename = upload.filename;
   const canLocal = process.env.TAXFLOW_LOCAL_GL !== "0" && /\.pdf$/i.test(filename);
   if (canLocal) {
     try {
@@ -177,8 +230,8 @@ async function handleConvert(req, res, reqUrl) {
   upstream.searchParams.delete("filename");
   const multipart = multipartFileBody(
     body,
-    reqUrl.searchParams.get("filename") || "upload.pdf",
-    req.headers["content-type"] || "application/pdf"
+    filename,
+    upload.contentType || "application/pdf"
   );
   const upstreamResponse = await requestBuffer(upstream.toString(), {
     method: "POST",

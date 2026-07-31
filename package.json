@@ -8,6 +8,8 @@
     "serve": "node preview-server.cjs",
     "ocr-proxy": "node local-ocr-proxy.cjs"
   },
-  "dependencies": {},
-  "devDependencies": {}
+  "dependencies": {
+    "pdfjs-dist": "^2.16.105",
+    "xlsx": "^0.18.5"
+  }
 }

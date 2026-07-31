@@ -1,0 +1,72 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>MediCore HMS Harness UI</title>
+    <link rel="stylesheet" href="src/styles.css?v=20260519-no-right-rail-v1" />
+  </head>
+  <body>
+    <div class="app-shell">
+      <aside class="sidebar">
+        <div class="brand">
+          <div class="brand-mark" aria-hidden="true">+</div>
+          <div>
+            <strong>MediCore HMS</strong>
+            <span>Department Harness</span>
+          </div>
+        </div>
+
+        <nav class="nav-list" aria-label="Hospital modules">
+          <button class="nav-item active" data-view="command" title="Command center"><span class="nav-icon">01</span><span>Command</span></button>
+          <button class="nav-item" data-view="doctor" title="Doctor clinic"><span class="nav-icon">02</span><span>Doctor Clinic</span></button>
+          <button class="nav-item" data-view="clinicNurse" title="Clinic nurse"><span class="nav-icon">03</span><span>Clinic Nurse</span></button>
+          <button class="nav-item" data-view="doctorWard" title="Doctor ward"><span class="nav-icon">04</span><span>Doctor Ward</span></button>
+          <button class="nav-item" data-view="nurse" title="Nurse ward"><span class="nav-icon">05</span><span>Nurse Ward</span></button>
+          <button class="nav-item" data-view="pediatric" title="Pediatric ward"><span class="nav-icon">06</span><span>Pediatric</span></button>
+          <button class="nav-item" data-view="icu" title="ICU ward"><span class="nav-icon">07</span><span>ICU</span></button>
+          <button class="nav-item" data-view="adminSetup" title="Administrator setup"><span class="nav-icon">08</span><span>Admin Setup</span></button>
+          <button class="nav-item" data-view="beds" title="Bed board"><span class="nav-icon">09</span><span>Bed Board</span></button>
+          <button class="nav-item" data-view="medication" title="Medication"><span class="nav-icon">10</span><span>Medication</span></button>
+          <button class="nav-item" data-view="inventory" title="Inventory"><span class="nav-icon">11</span><span>Inventory</span></button>
+          <button class="nav-item" data-view="assets" title="Assets"><span class="nav-icon">12</span><span>Assets</span></button>
+          <button class="nav-item" data-view="reports" title="Reports"><span class="nav-icon">13</span><span>Reports</span></button>
+          <button class="nav-item" data-view="audit" title="Audit trail"><span class="nav-icon">14</span><span>Audit</span></button>
+        </nav>
+
+        <section class="sidebar-card">
+          <strong>Access Harness</strong>
+          <span>RBAC + department + patient assignment</span>
+          <div class="mini-gates">
+            <b>Role</b>
+            <b>Dept</b>
+            <b>Patient</b>
+          </div>
+        </section>
+      </aside>
+
+      <main class="workspace">
+        <header class="topbar">
+          <div>
+            <p class="eyebrow">Private Hospital Operations</p>
+            <h1 id="viewTitle">Command Center</h1>
+          </div>
+          <div class="top-actions">
+            <label class="search" for="patientSearch">
+              <span aria-hidden="true">Search</span>
+              <input id="patientSearch" type="search" placeholder="Patient, MRN, ward, doctor" />
+            </label>
+            <button class="icon-button" id="notifyButton" title="Notifications">!</button>
+            <button class="user-chip nurse-contact-chip" title="Call or message nurse ward" data-action="open-modal" data-modal="nurse-communication">Nurse Ward</button>
+          </div>
+        </header>
+
+        <section class="layout-grid">
+          <section class="main-panel" id="mainPanel"></section>
+        </section>
+      </main>
+    </div>
+
+    <script src="src/app.js?v=20260519-no-right-rail-v1"></script>
+  </body>
+</html>
