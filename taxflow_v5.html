@@ -338,8 +338,8 @@ body.shell-resizing{cursor:col-resize;user-select:none;}
 â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â• */
 .tw{overflow-x:auto;border-radius:6px;border:1px solid var(--line);}
 table.t{width:100%;border-collapse:collapse;font-size:12px;}
-table.t th{background:var(--bg3);color:var(--t3);font-weight:700;padding:8px 12px;text-align:left;border-bottom:1px solid var(--line);font-size:10px;text-transform:uppercase;letter-spacing:.4px;white-space:nowrap;}
-table.t td{padding:9px 12px;border-bottom:1px solid rgba(30,48,82,.3);vertical-align:middle;transition:background .1s;}
+table.t th{background:var(--bg3);color:var(--t3);font-weight:700;padding:6px 9px;text-align:left;border-bottom:1px solid var(--line);font-size:10px;text-transform:uppercase;letter-spacing:.4px;white-space:nowrap;}
+table.t td{padding:6px 9px;border-bottom:1px solid rgba(30,48,82,.3);vertical-align:middle;transition:background .1s;}
 [data-theme="light"] table.t td{border-bottom:1px solid var(--line);}
 table.t tr:last-child td{border:none;}
 table.t tr:hover td{background:var(--blue-d);}
@@ -9995,7 +9995,7 @@ function malaysiaAuditAIMap(code,name,bal){
   else if(n.match(/opening stock|purchases|stock adjustment|inventory write.off/)) set('Cost of Sales','Allowable - S.33(1)','P&L Cost of Sales',.94,false,'Stock movement mapped to cost of sales.',true);
   else if(n.match(/closing stock|raw material|finished goods|work in progress|packing material|consumables|spare parts|trading stock|inventory/)) set(bal>=0?'Current Asset':'Cost of Sales',bal>=0?'Balance Sheet - Current Asset':'Inventory / COGS - Review',bal>=0?'Inventories':'Inventory Schedule',.84,true,'Inventory can be BS inventory or P&L cost depending on closing/opening movement.',true);
   else if(n.match(/project cost|subcontractor|diesel|toll|medical supplies|doctor incentive|factory wages|production overhead|machine repair/)) set('Cost of Sales','Allowable - S.33(1)','Direct Cost / Industry Schedule',.92,true,'Industry direct cost mapped to cost of sales; auditor should confirm.',true);
-  else if(n.match(/accumulated depreciation/)) set('Fixed Asset','Fixed Asset Contra - no P&L add-back','FA Register / Contra Asset',.99,false,'Accumulated depreciation stays under fixed assets as contra asset, not depreciation expense.',true);
+  else if(n.match(/\b(accumulated|accum\.?)\s*(depreciation|deprn\.?)\b/)) set('Fixed Asset','Fixed Asset Contra - no P&L add-back','FA Register / Contra Asset',.99,false,'Accumulated depreciation stays under fixed assets as contra asset, not depreciation expense.',true);
   else if(n.match(/depreciation expense|depreciation/)) set('Operating Expenses','Add Back - S.39(1)(b) Depreciation','Schedule AB1',.99,false,'Depreciation expense is not deductible; claim capital allowance separately.',true);
   else if(n.includes('entertainment')) set('Operating Expenses','Add Back / Restrict - Entertainment','Entertainment Review',.91,true,'Entertainment may be partially deductible; supporting details required.',true);
   else if(n.match(/penalty|fine|compound|summon/)) set('Operating Expenses','Add Back - S.39(1)(h) Penalty','Schedule AB1',.99,false,'Fines and penalties are non-deductible.',true);
@@ -10041,7 +10041,7 @@ function malaysiaAuditAIMap(code,name,bal){
     else set('Current Liability','Balance Sheet - Current Liability','BS Current Liabilities',.94,false,'Payable/accrual mapped to current liability.');
   }
   else if(n.match(/long.*loan|term loan|deferred tax/)) set('Non-Current Liability','Balance Sheet - Non-Current Liability','BS Non-Current Liabilities',.94,false,'Long-term obligation mapped to non-current liability.');
-  else if(n.match(/share capital|paid.up/)) set('Equity','Balance Sheet - Share Capital','Equity Schedule',.98,false,'Share capital mapped to equity.');
+  else if(!n.match(/capital allowance|capital work|capital expenditure|working capital|capital gain/)&&n.match(/share capital|paid.up|\bcapital\b/)) set('Equity','Balance Sheet - Share Capital','Equity Schedule',.98,false,'Share capital mapped to equity.');
   else if(n.match(/retained|reserve|profit.*loss/)) set('Equity','Balance Sheet - Retained Earnings','Equity Schedule',.96,false,'Retained earnings and reserves mapped to equity.');
   else if(codeHint){usedFallback=true;set(codeHint.classification,codeHint.treat,codeHint.schedule,codeHint.confidence,codeHint.query,codeHint.reason,codeHint.wp);}
   else if(bal<0){usedFallback=true;set('Revenue','Taxable business income - review','P&L Revenue',.72,true,'Credit balance without clear account name; review.');}
@@ -11045,7 +11045,7 @@ function fsAssetCategoryKey(name){
 }
 function fsIsAccumDeprRow(r){
   return /\b(accumulated|accum\.?)\s*(depreciation|deprn\.?)\b|\bdepreciation\b.*\b(c\/f|written|bal|carried)\b/i.test(String(r.name||''))
-    || /contra asset|fa register/i.test(String(r.schedule||''));
+    || /contra asset/i.test(String(r.schedule||''));
 }
 // Groups Fixed Asset rows for BS display: each Accumulated Depreciation
 // account is matched to its cost account by category and combined into one
