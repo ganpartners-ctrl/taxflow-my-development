@@ -842,11 +842,15 @@ table.t .tot td{background:var(--bg3)!important;font-weight:700;border-top:1px s
         <div class="col">
           <div class="card"><div class="card-title">Controls</div>
             <div class="fg"><label class="fl">Tax Rate Mode</label>
-              <select class="fsel" id="tcMode" onchange="buildTC()">
-                <option value="sme23">SME YA 2023 (15%/17%/24%)</option>
-                <option value="corp">Corporate 24%</option>
-                <option value="sme22">SME YA 2022 (17%/24%)</option>
+              <select class="fsel" id="tcMode" onchange="tcModeManuallyChanged=true;buildTC()">
+                <option value="sme23">SME YA2023+ \u2014 15% / 17% / 24%</option>
+                <option value="sme20">SME YA2020\u2013YA2022 \u2014 17% / 24% (RM600k band)</option>
+                <option value="sme19">SME YA2019 \u2014 17% / 24% (RM500k band)</option>
+                <option value="sme18">SME YA2018 \u2014 18% / 24% (RM500k band)</option>
+                <option value="corp">Non-SME / Corporate \u2014 24% flat</option>
+                <option value="llp">LLP \u2014 same tiers as SME company</option>
               </select>
+              <div id="tc-mode-suggest" style="font-size:10px;color:var(--amber3);margin-top:3px"></div>
             </div>
             <div class="fg"><label class="fl">Chargeable Income (RM)</label><input class="fi" id="tcCI" value="" placeholder="0.00" oninput="this.dataset.manual=this.value?'1':'0';buildTC()" style="font-family:'IBM Plex Mono',monospace"></div>
             <div class="fg"><label class="fl">CP204 Instalments (RM)</label><input class="fi" id="tcCP204" value="" placeholder="0.00" oninput="buildTC()" style="font-family:'IBM Plex Mono',monospace"></div>
@@ -4132,6 +4136,57 @@ function tcSyncControlsFromClient(){
   if(cpEl) cpEl.value=cp204===''?'':cp204;
   if(modeEl&&y.taxRateMode) modeEl.value=y.taxRateMode;
 }
+// Corporate/SME tax band calculation, covering every rate regime YA2018
+// through YA2023+ (Schedule 1, Para 2A, ITA 1967, as amended by the Finance
+// Act for each year). LLP uses the same tiered structure as an SME company
+// (profit distributions to partners are separately tax-exempt, handled
+// elsewhere). Band thresholds:
+//   YA2018: 18% first RM500k, 24% excess
+//   YA2019: 17% first RM500k, 24% excess (band widened from RM500k the
+//           following year, not this one -- these are genuinely different)
+//   YA2020-2022: 17% first RM600k, 24% excess
+//   YA2023+: 15% first RM150k / 17% next RM450k / 24% excess
+function tcTaxBandsForMode(mode,ci){
+  ci=Number(ci)||0;
+  if(mode==='sme23'||mode==='llp'){
+    const t1=Math.min(150000,ci)*.15,t2=Math.min(450000,Math.max(0,ci-150000))*.17,t3=Math.max(0,ci-600000)*.24;
+    return {lines:[{d:`15% on RM ${f(Math.min(150000,ci),0)}`,a:t1},{d:`17% on RM ${f(Math.min(450000,Math.max(0,ci-150000)),0)}`,a:t2},{d:`24% on RM ${f(Math.max(0,ci-600000),0)}`,a:t3}],total:t1+t2+t3,
+            bandRows:[[Math.min(150000,ci),15,t1],[Math.min(450000,Math.max(0,ci-150000)),17,t2],[Math.max(0,ci-600000),24,t3]]};
+  }
+  if(mode==='sme20'||mode==='sme22'){ // sme22 kept as an alias for older saved clients
+    const t1=Math.min(600000,ci)*.17,t2=Math.max(0,ci-600000)*.24;
+    return {lines:[{d:`17% on RM ${f(Math.min(600000,ci),0)}`,a:t1},{d:`24% on RM ${f(Math.max(0,ci-600000),0)}`,a:t2}],total:t1+t2,
+            bandRows:[[Math.min(600000,ci),17,t1],[Math.max(0,ci-600000),24,t2]]};
+  }
+  if(mode==='sme19'){
+    const t1=Math.min(500000,ci)*.17,t2=Math.max(0,ci-500000)*.24;
+    return {lines:[{d:`17% on RM ${f(Math.min(500000,ci),0)}`,a:t1},{d:`24% on RM ${f(Math.max(0,ci-500000),0)}`,a:t2}],total:t1+t2,
+            bandRows:[[Math.min(500000,ci),17,t1],[Math.max(0,ci-500000),24,t2]]};
+  }
+  if(mode==='sme18'){
+    const t1=Math.min(500000,ci)*.18,t2=Math.max(0,ci-500000)*.24;
+    return {lines:[{d:`18% on RM ${f(Math.min(500000,ci),0)}`,a:t1},{d:`24% on RM ${f(Math.max(0,ci-500000),0)}`,a:t2}],total:t1+t2,
+            bandRows:[[Math.min(500000,ci),18,t1],[Math.max(0,ci-500000),24,t2]]};
+  }
+  // corp / non-SME: flat 24% for the entire YA2018-2026 window
+  const t1=ci*.24;
+  return {lines:[{d:`24% on RM ${f(ci,0)}`,a:t1}],total:t1,bandRows:[[ci,24,t1]]};
+}
+// Suggests the tax rate mode matching the client's actual YA, since
+// remembering which of 5+ regimes applies to which year is exactly the
+// kind of thing that should be automated rather than left to the
+// preparer's memory. Only shown as a suggestion -- never silently
+// overrides a mode the user has deliberately selected.
+function tcSuggestModeForYA(ya){
+  ya=Number(ya);
+  if(!ya) return null;
+  if(ya>=2023) return 'sme23';
+  if(ya>=2020) return 'sme20';
+  if(ya===2019) return 'sme19';
+  if(ya<=2018) return 'sme18';
+  return null;
+}
+let tcModeManuallyChanged=false;
 function buildTC(){
   const c=currentClient, y=currentYA;
   if(!c||!y){
@@ -4148,13 +4203,18 @@ function buildTC(){
   // preparer has typed their own override into the field.
   const ciManuallySet=ciField&&ciField.dataset.manual==='1';
   if(ciField&&!ciManuallySet) ciField.value=Math.max(0,aggregateIncome).toFixed(2);
-  const mode=document.getElementById('tcMode')?.value||'sme23';
+  const modeSel=document.getElementById('tcMode');
+  const suggestedMode=tcSuggestModeForYA(y.ya);
+  if(modeSel&&!tcModeManuallyChanged&&suggestedMode&&modeSel.value!==suggestedMode&&!y.taxRateMode) modeSel.value=suggestedMode;
+  const mode=modeSel?.value||'sme23';
+  const suggestEl=document.getElementById('tc-mode-suggest');
+  if(suggestEl){
+    suggestEl.textContent=(suggestedMode&&suggestedMode!==mode)?`\u26a0 YA ${y.ya} usually uses "${modeSel?.querySelector(`option[value="${suggestedMode}"]`)?.textContent||suggestedMode}" -- confirm this is intentional.`:'';
+  }
   const ci=Math.max(0,parseFloat(document.getElementById('tcCI')?.value||(y.ci||0))||0);
   const cp204=parseFloat(document.getElementById('tcCP204')?.value||(y.cp204||0))||0;
-  let lines=[],total=0;
-  if(mode==='sme23'){const t1=Math.min(150000,ci)*.15,t2=Math.min(450000,Math.max(0,ci-150000))*.17,t3=Math.max(0,ci-600000)*.24;lines=[{d:`15% on RM ${f(Math.min(150000,ci),0)}`,a:t1},{d:`17% on RM ${f(Math.min(450000,Math.max(0,ci-150000)),0)}`,a:t2},{d:`24% on RM ${f(Math.max(0,ci-600000),0)}`,a:t3}];total=t1+t2+t3;}
-  else if(mode==='sme22'){const t1=Math.min(600000,ci)*.17,t2=Math.max(0,ci-600000)*.24;lines=[{d:`17% on RM ${f(Math.min(600000,ci),0)}`,a:t1},{d:`24% on RM ${f(Math.max(0,ci-600000),0)}`,a:t2}];total=t1+t2;}
-  else{lines=[{d:`24% on RM ${f(ci,0)}`,a:ci*.24}];total=ci*.24;}
+  const bands=tcTaxBandsForMode(mode,ci);
+  let lines=bands.lines,total=bands.total;
   const bal=total-cp204;
   // Section 107C(10): a 10% penalty applies to the portion of actual tax
   // that under-estimates the CP204 estimate by more than 30% -- i.e. only
@@ -5069,16 +5129,14 @@ function renderFormC(){
   </div>`;
   const ci=ncNum(y.ci);
   const mode=y.taxRateMode||'sme23';
-  const modeLabel={sme23:'Qualifying SME \u2014 15% / 17% / 24% tiered rate',sme22:'Qualifying SME \u2014 17% / 24% tiered rate',corp:'Non-SME \u2014 24% flat rate'}[mode]||mode;
+  const modeLabel={sme23:'Qualifying SME \u2014 15% / 17% / 24% tiered rate',sme20:'Qualifying SME YA2020\u2013YA2022 \u2014 17% / 24% tiered rate',sme22:'Qualifying SME \u2014 17% / 24% tiered rate',sme19:'Qualifying SME YA2019 \u2014 17% / 24% tiered rate',sme18:'Qualifying SME YA2018 \u2014 18% / 24% tiered rate',corp:'Non-SME \u2014 24% flat rate',llp:'LLP \u2014 same tiers as SME company'}[mode]||mode;
   const basisFrom=y.basisFrom||y.basisPeriodFrom||(y.ya?`01/01/${y.ya}`:'');
   const basisTo=y.basisTo||y.basisPeriodTo||(y.ya?`31/12/${y.ya}`:'');
   let bandRows='', total=0;
   if(ci>0){
-    if(mode==='sme23'){const t1=Math.min(150000,ci)*.15,t2=Math.min(450000,Math.max(0,ci-150000))*.17,t3=Math.max(0,ci-600000)*.24;total=t1+t2+t3;
-      bandRows=[[Math.min(150000,ci),15,t1],[Math.min(450000,Math.max(0,ci-150000)),17,t2],[Math.max(0,ci-600000),24,t3]];}
-    else if(mode==='sme22'){const t1=Math.min(600000,ci)*.17,t2=Math.max(0,ci-600000)*.24;total=t1+t2;
-      bandRows=[[Math.min(600000,ci),17,t1],[Math.max(0,ci-600000),24,t2]];}
-    else{total=ci*.24; bandRows=[[ci,24,total]];}
+    const bands=tcTaxBandsForMode(mode,ci);
+    total=bands.total;
+    bandRows=bands.bandRows;
   }
   const cp204=ncNum(y.cp204);
   const bal=total-cp204;
@@ -7119,25 +7177,30 @@ function taxMsicDesc(code){
   return hit?hit.description:'';
 }
 function taxIncentiveD4Master(){
+  // LHDN Form C Appendix D4 ("Kod Insentif") -- current list, confirmed
+  // against the 2021 official appendix (ef.hasil.gov.my/eC2021/temp/
+  // KodInsentif.pdf) and cross-checked as still current in the 2026
+  // Company Return Guidebook. Four codes present in older/obsolete
+  // versions of this list (402, 411, 415, 416) were removed from the
+  // official form in the 2021 revision and are NOT included here.
+  // Industrial Building Allowance is NOT a D4 code -- it is claimed via
+  // Form C Part C (field C2, Schedule 3 subpara 42(1)). R&D double
+  // deductions are Appendix D1 codes (301/302), not D4.
   return [
-    {code:'401',label:'Accelerated Capital Allowance'},
-    {code:'402',label:'Industrial Building Allowance'},
-    {code:'403',label:'Approved Service Project'},
-    {code:'404',label:'Exemption under subsection 127(3A)'},
-    {code:'405',label:'Exemption by Ministerial Direction'},
-    {code:'406',label:'Reinvestment Allowance'},
-    {code:'407',label:'Public Infrastructure Allowance'},
-    {code:'408',label:'Increased Export Allowance for Service Companies'},
-    {code:'409',label:'Pre-package Incentive under Promotion of Investments Act 1986'},
-    {code:'410',label:'Tax Exemption for Increased Export'},
-    {code:'411',label:'Provident Fund Allowance'},
-    {code:'412',label:'Basis Period Incentive'},
-    {code:'413',label:'Schedule 7A Allowance'},
-    {code:'414',label:'Schedule 7B Allowance'},
-    {code:'415',label:'Industrial Building Allowance'},
-    {code:'416',label:'Commercialisation of Resource-Based R&D Findings Incentive'},
-    {code:'417',label:'Commercialisation of Non-Resource-Based R&D Findings Incentive'},
-    {code:'418',label:'Accelerated Capital Allowance'}
+    {code:'401',label:'Pioneer income',citation:'Promotion of Investments Act 1986',eligible:'Company; agriculture-based cooperative; farmers\u2019/fishermen\u2019s association; agriculture-only partnership/sole proprietorship'},
+    {code:'403',label:'Income exempted under subsection 60A(2)',citation:'S.60A(2), ITA 1967',eligible:'Insurance company'},
+    {code:'404',label:'Income exempted under subsection 60B(2) -- REPEALED (Act 812, 2019)',citation:'S.60B(2), ITA 1967 (repealed)',eligible:'Insurance company'},
+    {code:'405',label:'Foreign fund management company income',citation:'S.60G, ITA 1967',eligible:'Foreign fund management company'},
+    {code:'406',label:'Closed-end fund company income',citation:'S.60H, ITA 1967',eligible:'Closed-end fund company'},
+    {code:'407',label:'Tax-exempt dividend income',citation:'ITA 1967 & Promotion of Investments Act 1986',eligible:'Any person'},
+    {code:'408',label:'Shipping income',citation:'S.54A, ITA 1967',eligible:'Any person'},
+    {code:'409',label:'Income exempted under subsection 60AA(22)',citation:'S.60AA(22), ITA 1967',eligible:'Takaful company'},
+    {code:'410',label:'Investment Tax Allowance',citation:'Promotion of Investments Act 1986',eligible:'Company; agriculture-based cooperative; farmers\u2019/fishermen\u2019s association; agriculture-only partnership/sole proprietorship'},
+    {code:'412',label:'Infrastructure Allowance -- REPEALED (Act A1468, 2014)',citation:'Promotion of Investments Act 1986 (repealed)',eligible:'Company'},
+    {code:'413',label:'Reinvestment Allowance',citation:'Schedule 7A, ITA 1967',eligible:'Company; agriculture-based cooperative; farmers\u2019/fishermen\u2019s association'},
+    {code:'414',label:'Services Sector Investment Allowance',citation:'Schedule 7B, ITA 1967',eligible:'Company'},
+    {code:'417',label:'Prospecting/mining operations expenditure',citation:'Schedule 4, ITA 1967',eligible:'Any person'},
+    {code:'418',label:'Qualifying pre-operational business expenditure',citation:'Schedule 4B, ITA 1967',eligible:'Company'},
   ];
 }
 function taxIncentiveLabelForCode(code){
