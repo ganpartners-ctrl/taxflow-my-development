@@ -4804,13 +4804,13 @@ function tcEnsureInfoSchedules(){
     boSource,
     'beneficialOwners'
   ),'beneficialOwners');
-  k.shareholderSchedule=shareholders;
-  k.directorSchedule=directors;
-  k.beneficialOwnerSchedule=beneficialOwners;
+  k.shareholderSchedule=shareholders.filter(s=>!(k.shareholdersDeleted||[]).includes(tcPersonId(s)));
+  k.directorSchedule=directors.filter(d=>!(k.directorsDeleted||[]).includes(tcPersonId(d)));
+  k.beneficialOwnerSchedule=beneficialOwners.filter(b=>!(k.beneficialOwnersDeleted||[]).includes(tcPersonId(b)));
   if((!Array.isArray(k.shareholders)||!k.shareholders.length)&&shareholders.length) k.shareholders=shareholders;
   if((!Array.isArray(k.directors)||!k.directors.length)&&directors.length) k.directors=directors;
   if((!Array.isArray(k.beneficialOwners)||!k.beneficialOwners.length)&&beneficialOwners.length) k.beneficialOwners=beneficialOwners;
-  return {shareholders,directors,beneficialOwners};
+  return {shareholders:k.shareholderSchedule,directors:k.directorSchedule,beneficialOwners:k.beneficialOwnerSchedule};
 }
 
 function tcMatchPersonInLedger(row,person){
@@ -4943,6 +4943,21 @@ function tcPersonInput(kind,i,key,value,width='120px'){
   return `<input class="fi" value="${tfEsc(value||'')}" oninput="tcInfoUpdate('${kind}',${i},'${key}',this.value)" style="min-width:${width};font-size:11px;padding:6px 7px">`;
 }
 
+function tcDeletePersonRow(kind,i){
+  if(!currentClient) return;
+  const info=tcEnsureInfoSchedules();
+  const row=(info[kind]||[])[i];
+  if(!row) return;
+  if(!confirm(`Delete "${row.name||'this row'}" from the ${kind} schedule? This can\u2019t be undone from here -- if the row was extracted correctly and you delete it by mistake, you\u2019ll need to re-upload or re-enter it.`)) return;
+  currentClient.kyc=currentClient.kyc||{};
+  const k=currentClient.kyc;
+  const deletedKey=kind==='shareholders'?'shareholdersDeleted':kind==='directors'?'directorsDeleted':'beneficialOwnersDeleted';
+  k[deletedKey]=k[deletedKey]||[];
+  const id=tcPersonId(row);
+  if(id&&!k[deletedKey].includes(id)) k[deletedKey].push(id);
+  tfSaveState();
+  renderStandaloneInfoSchedule(kind);
+}
 function tcRenderInfoSchedule(kind,title,rows){
   const isDir=kind==='directors', isBo=kind==='beneficialOwners';
   const cols=isDir||isBo
@@ -4963,10 +4978,10 @@ function tcRenderInfoSchedule(kind,title,rows){
       </div>
       ${(isDir&&currentClient?.kyc?.eaForms?.length)?`<div style="font-size:11px;color:var(--t2);margin-bottom:8px">EA forms: ${currentClient.kyc.eaForms.map(f=>tfEsc(f.name)).join(', ')}</div>`:''}
       <div style="overflow:auto;border:1px solid var(--line);border-radius:8px">
-        <table class="t" style="min-width:${cols.reduce((s,c)=>s+parseInt(c[2],10),240)}px">
-          <thead><tr>${cols.map(c=>`<th>${tfEsc(c[1])}</th>`).join('')}</tr></thead>
+        <table class="t" style="min-width:${cols.reduce((s,c)=>s+parseInt(c[2],10),300)}px">
+          <thead><tr>${cols.map(c=>`<th>${tfEsc(c[1])}</th>`).join('')}<th style="width:70px">Action</th></tr></thead>
           <tbody>
-            ${rows.length?rows.map((r,i)=>`<tr>${cols.map(c=>`<td>${c[0]==='status'?`<span class="badge ${r.status==='confirmed'?'b-green':'b-amber'}">${tfEsc(r.status||'review_required')}</span>`:tcPersonInput(kind,i,c[0],r[c[0]],c[2])}</td>`).join('')}</tr>`).join(''):`<tr><td colspan="${cols.length}" style="padding:18px;text-align:center;color:var(--t3)">No rows yet. Upload Form C / tax computation or add rows in Client Profile.</td></tr>`}
+            ${rows.length?rows.map((r,i)=>`<tr>${cols.map(c=>`<td>${c[0]==='status'?`<span class="badge ${r.status==='confirmed'?'b-green':'b-amber'}">${tfEsc(r.status||'review_required')}</span>`:tcPersonInput(kind,i,c[0],r[c[0]],c[2])}</td>`).join('')}<td><button class="btn btn-ghost btn-sm" style="color:var(--red3)" onclick="tcDeletePersonRow('${kind}',${i})">Delete</button></td></tr>`).join(''):`<tr><td colspan="${cols.length+1}" style="padding:18px;text-align:center;color:var(--t3)">No rows yet. Upload Form C / tax computation or add rows in Client Profile.</td></tr>`}
           </tbody>
         </table>
       </div>
@@ -13356,6 +13371,61 @@ function ncParseTaxCompPeopleTableRow(block,kind,sourceLabel){
   };
   return (typeof tcPersonLooksUsableForSchedule==='function'&&!tcPersonLooksUsableForSchedule(row,kind))?null:row;
 }
+// Handles a specific, common Directors/Shareholders Information Schedule
+// layout: the person's NAME and designation appear on their own lines
+// ABOVE a numbered "N. Name: <percent> <salary> <fees> <loan>" data line
+// -- the label line itself does not contain the name inline, which is
+// why the generic table/label parsers below miss it or garble the name
+// by capturing the surrounding text instead. This looks backward from
+// each numbered line for the actual name, and forward for IC/DOB/address.
+function ncParseDirectorsScheduleBlockFormat(text){
+  const lines=String(text||'').split(/\r?\n/).map(l=>l.trim());
+  const numberedLineRe=/^(\d+)\.\s*Name:\s*([\d.]+)\s+([\d,]+(?:\.\d+)?|-)\s+([\d,]+(?:\.\d+)?|-)\s+([\d,]+(?:\.\d+)?|-)\s*$/i;
+  const isLikelyNameLine=(l)=>{
+    if(!l||l.length<3||l.length>60) return false;
+    if(/[:]/.test(l)) return false; // labels have colons, names don't
+    if(/^\(.*\)$/.test(l)) return false; // designation line like "(Service Director)"
+    if(/^(page|share|holding|salary|bonus|fees|commission|allowance|loan|to|from|director|rm|%|address|tax file|i\/c|date of birth|tel|email)\b/i.test(l)) return false;
+    if(!/^[A-Z][A-Z\s.'@\/-]+$/.test(l)) return false; // all-caps name convention
+    return true;
+  };
+  const results=[];
+  for(let i=0;i<lines.length;i++){
+    const m=lines[i].match(numberedLineRe);
+    if(!m) continue;
+    const [,ordinal,pct,salary,fees,loan]=m;
+    let name='',designation='';
+    for(let back=i-1;back>=Math.max(0,i-4);back--){
+      const l=lines[back];
+      if(/^\(.*director.*\)$/i.test(l)){designation=l.replace(/[()]/g,'');continue;}
+      if(isLikelyNameLine(l)){name=l;break;}
+    }
+    if(!name) continue;
+    let ic='',dob='',tin='',tel='',email='',addressLines=[];
+    for(let fwd=i+1;fwd<Math.min(lines.length,i+20);fwd++){
+      const l=lines[fwd];
+      if(numberedLineRe.test(l)) break; // next person's block starts
+      if(/^i\/c\s*no\s*:/i.test(l)) ic=l.replace(/^i\/c\s*no\s*:/i,'').trim();
+      else if(/^date of birth\s*:/i.test(l)) dob=l.replace(/^date of birth\s*:/i,'').trim();
+      else if(/^tax file no\s*:/i.test(l)) tin=l.replace(/^tax file no\s*:/i,'').trim();
+      else if(/^tel\s*no\s*:/i.test(l)) tel=l.replace(/^tel\s*no\s*:/i,'').trim();
+      else if(/^email\s*:/i.test(l)) email=l.replace(/^email\s*:/i,'').trim();
+      else if(/^address\b/i.test(l)) addressLines.push(l.replace(/^address\s*/i,'').trim());
+      else if(addressLines.length&&l&&!/^:$/.test(l)&&!/^(malaysia)$/i.test(l)) addressLines.push(l);
+      else if(/^malaysia$/i.test(l)){addressLines.push(l);break;}
+    }
+    results.push(ncNormalizePeopleAddressLines({
+      name,designation,ic,dob,tin,tel,email,
+      address:addressLines.filter(Boolean).join(', '),
+      sharePercent:ncLooseAmt(pct),directPercent:ncLooseAmt(pct),
+      salary:ncLooseAmt(salary),fees:ncLooseAmt(fees),loan:ncLooseAmt(loan),
+      country:'Malaysia',
+      source_page_or_section:'Directors/Shareholders Information Schedule (numbered block format)',
+      review_status:'review_required',
+    }));
+  }
+  return {directors:results,shareholders:[]};
+}
 function ncParseTaxCompPeopleTableSchedules(text){
   const out={directors:[],shareholders:[],beneficialOwners:[]};
   [['directors','Tax computation director table'],['shareholders','Tax computation shareholder table'],['beneficialOwners','Tax computation beneficial owner table']].forEach(([kind,label])=>{
@@ -13383,7 +13453,8 @@ function ncParseTaxCompPeopleSchedules(text){
   const loose=ncParseLoosePeopleSchedules(raw);
   const labelled=ncParseTaxCompLabelledPeopleSchedules(raw);
   const full=ncParsePeopleRowsFromFullText(raw);
-  const directors=ncBestExtractedPeopleRows('director',table.directors,strict.directors,parsed.directors,labelled.directors,loose.directors,full.directors);
+  const blockFormat=ncParseDirectorsScheduleBlockFormat(raw);
+  const directors=ncBestExtractedPeopleRows('director',table.directors,strict.directors,parsed.directors,labelled.directors,loose.directors,full.directors,blockFormat.directors);
   let shareholders=ncBestExtractedPeopleRows('shareholder',table.shareholders,strict.shareholders,parsed.shareholders,labelled.shareholders,loose.shareholders,full.shareholders);
   if(directors.length){
     const shareholderIds=new Set((shareholders||[]).map(s=>String(s.ic||s.idNo||s.regNo||'').replace(/\D/g,'')).filter(Boolean));
