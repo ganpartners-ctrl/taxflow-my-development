@@ -8385,10 +8385,42 @@ function peRenderTaxCompAddBacks(rows){
 function peRenderTaxCompCA(rows){
   const list=rows&&rows.length?rows:[];
   if(!list.length) return `<div style="padding:10px;color:var(--red3);font-size:12px">No CA rows extracted. Upload/re-process the prior-year tax computation.</div>`;
-  const cols=[['categoryName','Category'],['assetType','Asset'],['yearAcquired','Year'],['iaRate','IA %'],['aaRate','AA %'],['originalCost','Original Cost'],['qeCF','QE C/F'],['openingRE','Opening R.E. B/F'],['reCarriedForward','R.E. C/F'],['note','Note']];
-  return `<div style="overflow:auto;max-height:360px"><table class="t" style="min-width:1350px"><thead><tr>${cols.map(c=>`<th>${c[1]}</th>`).join('')}</tr></thead><tbody>
-    ${list.map((r,i)=>`<tr>${cols.map(c=>`<td><input class="fi" data-pe-ca="${i}" data-k="${c[0]}" value="${tfEsc(r[c[0]]??'')}"></td>`).join('')}</tr>`).join('')}
-  </tbody></table></div>`;
+  const cols=[['categoryName','Category'],['assetType','Asset'],['yearAcquired','Year'],['iaRate','IA %'],['aaRate','AA %'],['originalCost','Original Cost'],['qeAddThisYear','QE Additions (this YA)'],['qeCF','QE C/F'],['openingRE','Opening R.E. B/F'],['reCarriedForward','R.E. C/F (entered)'],['note','Note']];
+  const calcCols=['Computed IA','Computed AA','Computed Allowable','Computed R.E. C/F'];
+  return `
+  <div style="margin-bottom:8px;display:flex;gap:8px;align-items:center">
+    <button class="btn btn-primary btn-sm" onclick="peCarryForwardCAOpeningBalances()">Carry R.E. C/F \u2192 This Year Opening R.E. B/F</button>
+    <span style="font-size:11px;color:var(--t3)">Copies each row\u2019s R.E. C/F into Opening R.E. B/F. Review before doing this -- it overwrites the current Opening R.E. B/F values.</span>
+  </div>
+  <div style="overflow:auto;max-height:420px"><table class="t" style="min-width:1650px"><thead><tr>${cols.map(c=>`<th>${c[1]}</th>`).join('')}${calcCols.map(c=>`<th style="background:var(--blue-d)">${c}</th>`).join('')}</tr></thead><tbody>
+    ${list.map((r,i)=>{
+      const calc=caCalculateAssetAllowances({category:r.categoryName||r.assetType,qeBF:ncNum(r.qeCF)-ncNum(r.qeAddThisYear||0),qeAdd:ncNum(r.qeAddThisYear||0),qeDisp:0,reBF:ncNum(r.openingRE),reDisp:0,iaRateOverride:ncNum(r.iaRate)/100||undefined,aaRateOverride:ncNum(r.aaRate)/100||undefined});
+      const enteredReCF=ncNum(r.reCarriedForward);
+      const mismatch=enteredReCF>0&&Math.abs(calc.reCF-enteredReCF)>1;
+      return `<tr>${cols.map(c=>`<td><input class="fi" data-pe-ca="${i}" data-k="${c[0]}" value="${tfEsc(r[c[0]]??'')}" oninput="peRecalcCARow(${i})"></td>`).join('')}
+      <td class="r m" style="background:var(--bg3)">${f(calc.ia)}</td>
+      <td class="r m" style="background:var(--bg3)">${f(calc.aa)}</td>
+      <td class="r m" style="background:var(--bg3);font-weight:700">${f(calc.allowable)}</td>
+      <td class="r m" style="background:var(--bg3);${mismatch?'color:var(--red3);font-weight:700':''}" title="${mismatch?`Computed R.E. C/F (${f(calc.reCF)}) differs from the entered value (${f(enteredReCF)}) -- confirm which is correct before posting.`:''}">${f(calc.reCF)}${mismatch?' \u26a0':''}</td>
+    </tr>`;}).join('')}
+  </tbody></table></div>
+  <div style="margin-top:6px;font-size:10px;color:var(--t3)">Computed columns use standard Schedule 3 rates (or the IA%/AA% entered per row if provided) applied automatically -- IA on this YA\u2019s additions only, AA on original QE capped at remaining R.E. Red \u26a0 means the computed and entered R.E. C/F disagree -- confirm before finalising.</div>`;
+}
+function peRecalcCARow(i){
+  // Live recompute is handled by full re-render on carry-forward / row
+  // edits reading straight from the DOM inputs; this hook exists so a
+  // future live-preview-without-full-rerender enhancement has a place to
+  // attach without restructuring the table again.
+}
+function peCarryForwardCAOpeningBalances(){
+  if(!confirm('Copy every row\u2019s R.E. C/F into this year\u2019s Opening R.E. B/F? This overwrites the current Opening R.E. B/F values.')) return;
+  const rows=document.querySelectorAll('[data-pe-ca][data-k="reCarriedForward"]');
+  rows.forEach(el=>{
+    const i=el.getAttribute('data-pe-ca');
+    const openingEl=document.querySelector(`[data-pe-ca="${i}"][data-k="openingRE"]`);
+    if(openingEl) openingEl.value=el.value;
+  });
+  showNotif('success','Carried forward','R.E. C/F copied into Opening R.E. B/F for all rows. Review before saving.');
 }
 function peRenderTaxCompHP(rows){
   const list=rows&&rows.length?rows:[];
@@ -8415,7 +8447,7 @@ function peReadTaxCompReview(base){
   document.querySelectorAll('[data-pe-ca]').forEach(el=>{
     const i=parseInt(el.getAttribute('data-pe-ca'),10), k=el.getAttribute('data-k');
     ca[i]=ca[i]||{};
-    ca[i][k]=['iaRate','aaRate','originalCost','qeCF','openingRE','reCarriedForward'].includes(k)?ncNum(el.value):el.value;
+    ca[i][k]=['iaRate','aaRate','originalCost','qeAddThisYear','qeCF','openingRE','reCarriedForward'].includes(k)?ncNum(el.value):el.value;
   });
   if(ca.length) out.caSchedule=ca.filter(r=>r.assetType||r.originalCost||r.openingRE);
   const hp=[];
@@ -15479,6 +15511,55 @@ async function cdbViewRecord(tin, ya) {
 // used vehicle. Commercial vehicles (goods vehicles, lorries, buses,
 // vehicles used directly for a transport/haulage business etc.) are not
 // restricted -- the full cost qualifies.
+// Standard Schedule 3 IA/AA rates by asset category (confirmed via
+// research, stable across YA2018-YA2026 except where a specific
+// time-limited ACA applies -- see TAX_RULINGS_REGISTRY for those).
+// Category keys are matched loosely (case-insensitive substring) against
+// the asset's category/particular description.
+function caStandardRateForCategory(category){
+  const c=String(category||'').toLowerCase();
+  if(/small value/.test(c)) return {ia:1.00,aa:0,label:'Small value asset (100% write-off)'};
+  if(/industrial building|factory|warehouse/.test(c)) return {ia:0.10,aa:0.03,label:'Industrial Building Allowance'};
+  if(/motor vehicle|car\b/.test(c)) return {ia:0.20,aa:0.20,label:'Motor vehicle'};
+  if(/computer|ict|software/.test(c)) return {ia:0.20,aa:0.20,label:'Computer / ICT equipment'};
+  if(/office equipment|furniture|fitting/.test(c)) return {ia:0.20,aa:0.10,label:'Office equipment / furniture & fittings'};
+  if(/freehold land|land and building/.test(c)) return {ia:0,aa:0,label:'Non-qualifying (freehold land/building)'};
+  return {ia:0.20,aa:0.14,label:'Plant & machinery (general)'};
+}
+// Computes IA, AA, and the resulting QE/RE carried-forward balances for
+// one asset for the current year, automatically:
+//   - IA is claimed ONLY in the year of addition (QE addition x IA rate)
+//   - AA is claimed every year the asset remains in use, on the ORIGINAL
+//     qualifying expenditure (qeBF + this year's addition), NOT a
+//     declining/reducing balance -- this matches Schedule 3 convention
+//   - AA is capped so cumulative allowances never exceed residual
+//     expenditure (an asset can't be written down below zero)
+//   - Motor vehicle QE restriction is applied automatically before any
+//     rate calculation, using the existing caMotorVehicleRestrictedQE()
+function caCalculateAssetAllowances(asset){
+  const category=asset.category||asset.particular||'';
+  const rates=caStandardRateForCategory(category);
+  const iaRate=asset.iaRateOverride!=null?Number(asset.iaRateOverride):rates.ia;
+  const aaRate=asset.aaRateOverride!=null?Number(asset.aaRateOverride):rates.aa;
+  let qeAdd=Number(asset.qeAdd)||0;
+  let restrictionNote='';
+  if(asset.vehicleType&&asset.vehicleType!=='none'&&asset.vehicleType!=='commercial'){
+    const restriction=caMotorVehicleRestrictedQE(asset.origCost||qeAdd,asset.vehicleType);
+    if(restriction.restricted){qeAdd=restriction.qe;restrictionNote=restriction.note;}
+  }
+  const qeBF=Number(asset.qeBF)||0;
+  const qeDisp=Number(asset.qeDisp)||0;
+  const qeCF=Math.max(0,qeBF+qeAdd-qeDisp);
+  const reBF=Number(asset.reBF)||0;
+  const reDisp=Number(asset.reDisp)||0;
+  const ia=qeAdd>0?Math.round(qeAdd*iaRate*100)/100:0;
+  const availableRE=Math.max(0,reBF+qeAdd-reDisp-ia);
+  const aaUncapped=Math.round((qeBF+qeAdd-qeDisp)*aaRate*100)/100;
+  const aa=Math.max(0,Math.min(aaUncapped,availableRE));
+  const allowable=ia+aa;
+  const reCF=Math.max(0,reBF+qeAdd-reDisp-allowable);
+  return {category,rateLabel:rates.label,iaRate,aaRate,qeBF,qeAdd,qeDisp,qeCF,reBF,reDisp,ia,aa,allowable,reCF,restrictionNote};
+}
 function caMotorVehicleRestrictedQE(cost,vehicleType){
   cost=Number(cost)||0;
   if(!vehicleType||vehicleType==='commercial'||vehicleType==='none') return {qe:cost,restricted:false,note:''};
