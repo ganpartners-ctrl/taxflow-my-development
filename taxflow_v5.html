@@ -4541,6 +4541,7 @@ function tcPersonLooksUsableForSchedule(p,kind='person'){
   const id=tcPersonId(p).replace(/\D/g,'');
   const pct=ncLooseAmt(tcPick(p,'sharePct','sharePercent','share','directPercent','directPct','controlPct'));
   if(!name&&!id) return false;
+  if(name&&typeof ncIsPeoplePlaceholderName==='function'&&ncIsPeoplePlaceholderName(name)) return false;
   if(tcPeopleHeaderNeedle(name)||tcPeopleHeaderNeedle(addr)) return false;
   if(name&&typeof ncLooksLikePeopleHeaderText==='function'&&ncLooksLikePeopleHeaderText(name)) return false;
   if(addr&&typeof ncLooksLikePeopleHeaderText==='function'&&ncLooksLikePeopleHeaderText(addr)) return false;
@@ -7699,7 +7700,12 @@ function renderPriorYr(){
   const missingPeopleMsg=peopleIssues.length?`<div style="margin-top:12px;background:rgba(245,158,11,.10);border:1px solid rgba(245,158,11,.35);border-radius:8px;padding:10px 12px;color:#92400e;font-size:12px"><b>Extraction needs review:</b> ${tfEsc(peopleIssues.join(' · '))}. Upload Form C Lampiran 2 / tax computation people schedule, or edit in Profile Extract before posting people data.</div>`:'';
   const existingPeopleMsg=(!sourceDirs.length&&!sourceShs.length&&(existingDirs.length||existingShs.length))?`<div style="margin-top:8px;background:rgba(59,130,246,.08);border:1px solid rgba(59,130,246,.25);border-radius:8px;padding:10px 12px;color:var(--t2);font-size:12px"><b>Existing profile data found:</b> ${existingDirs.length} director row(s), ${existingShs.length} shareholder row(s). These are not counted as newly extracted from the uploaded PDF.</div>`:'';
   const missingPeopleText='Not extracted - upload Form C Lampiran 2 / people schedule';
-  const formCQuestions=fc.controlledTransactions||currentClient?.kyc?.formCQuestions||[];
+  const formCQuestions=ncRepairFormCQA({
+    ...(fc||{}),
+    controlledTransactions:(fc.controlledTransactions||[]).some(ncHasFormCQAAnswer)
+      ? fc.controlledTransactions
+      : (currentClient?.kyc?.formCQuestions||fc.controlledTransactions||[])
+  },{text:fc._rawText||fc.rawText||'',source:'Form C Lampiran 1'});
   const card=(type,title,sub,accept)=>`
     <div class="card al" style="min-height:250px">
       <div class="card-title">${title}</div>
@@ -7746,7 +7752,7 @@ function renderPriorYr(){
       <div style="border:1px solid var(--line);border-radius:8px;overflow:hidden;margin-top:12px">
         <div style="padding:8px 10px;background:var(--bg4);font-size:12px;font-weight:800;color:var(--blue3)">Form C Q&amp;A - Controlled Transactions</div>
         <div style="padding:8px 10px;font-size:11px;color:var(--t3)">Fill or confirm the current-year answer here. Last-year values are only recommendations until the user confirms.</div>
-        ${ncRenderFormCQA(formCQuestions,{editable:true})}
+        ${ncRenderFormCQA({...fc,controlledTransactions:formCQuestions},{editable:true,text:fc._rawText||fc.rawText||'',companyName:fc.companyName||currentClient?.name||''})}
       </div>
     </div>`;
 }
@@ -7922,7 +7928,12 @@ function priorApplyExtractedToClient(opts={}){
     String(a.particular||a.description||a.assetName||a.assetType||a.categoryName||'').trim()
   ));
   const hpReady=Array.isArray(normalizedTc?.hpAssets)&&normalizedTc.hpAssets.length>0;
-  const formCQuestions=document.querySelector('[data-fcqa]')?ncReadFormCQAFromInputs():(fc.controlledTransactions||currentClient.kyc.formCQuestions||[]);
+  const formCQuestions=document.querySelector('[data-fcqa]')
+    ? ncReadFormCQAFromInputs()
+    : ncRepairFormCQA({
+        ...(fc||{}),
+        controlledTransactions:fc.controlledTransactions||currentClient.kyc.formCQuestions||[]
+      },{text:fc._rawText||fc.rawText||'',source:'Form C Lampiran 1'});
   currentClient.kyc={
     ...currentClient.kyc,
     paidUpCapital:fc.paidUpCapital||currentClient.kyc.paidUpCapital||'',
@@ -8018,23 +8029,41 @@ function peSideField(label,key,extracted,current,source){
     <td><span class="pill ${current||extracted?'warn':'bad'}">${current?'User value':(extracted?'Review':'Missing')}</span></td>
   </tr>`;
 }
+function peKindFromType(type){
+  if(type==='shareholders') return 'shareholder';
+  if(type==='beneficialOwners'||type==='beneficialOwner'||type==='bo') return 'beneficialOwner';
+  return 'director';
+}
+function peStrictPeopleRows(type,rows){
+  const kind=peKindFromType(type);
+  const arr=Array.isArray(rows)?rows:[];
+  if(typeof ncDedupePeopleRows==='function') return ncDedupePeopleRows(arr,kind);
+  return arr
+    .map(r=>typeof ncSanitizePeopleRow==='function'?ncSanitizePeopleRow(r,kind):r)
+    .filter(Boolean);
+}
 function peRenderPersonRows(type,rows){
-  const list=(rows&&rows.length?rows:[]);
+  const list=peStrictPeopleRows(type,rows);
   const cols=type==='directors'
     ?[['name','Name',2],['ic','ID No.',1],['dob','DOB',1],['phone','Phone',1],['sharePercent','Share %',1],['salary','Salary',1],['fees','Fees',1],['loanTo','Loan To Director',1],['loanFrom','Loan From Director',1],['address','Address',2]]
     :[['name','Name',2],['ic','ID / Reg No.',1],['dob','DOB',1],['country','Country',1],['directPercent','Direct %',1],['tin','TIN',1],['address','Address',2]];
   if(!list.length) return `<div style="padding:10px;color:var(--red3);font-size:12px">Not extracted. Upload or re-process Form C in Upload Prior Year.</div>`;
   return `<div style="display:grid;grid-template-columns:repeat(auto-fit,minmax(330px,1fr));gap:10px">
-    ${list.map((r,i)=>`<div style="border:1px solid var(--line);border-radius:8px;background:var(--bg2);padding:10px">
+    ${list.map((r,i)=>`<div data-pe-card="${type}" data-i="${i}" style="border:1px solid var(--line);border-radius:8px;background:var(--bg2);padding:10px">
       <div style="display:flex;justify-content:space-between;gap:8px;align-items:flex-start;margin-bottom:8px">
         <div style="font-size:14px;font-weight:800;color:var(--blue3);line-height:1.25">${tfEsc(r.name||r.Name||('Row '+(i+1)))}</div>
-        <span class="pill warn">${tfEsc(r.review_status||'review_required')}</span>
+        <span data-pe-status class="pill ${(r.review_status==='confirmed')?'ok':'warn'}">${tfEsc(r.review_status||'review_required')}</span>
       </div>
       <div style="display:grid;grid-template-columns:repeat(2,minmax(0,1fr));gap:8px">
         ${cols.map(c=>`<div style="${c[2]===2?'grid-column:1 / -1':''}">
           <label class="fl" style="margin-bottom:3px">${tfEsc(c[1])}</label>
           <input class="fi" data-pe-person="${type}" data-i="${i}" data-k="${c[0]}" value="${tfEsc(r[c[0]]??r[c[0].replace('Percent','Pct')]??'')}">
         </div>`).join('')}
+        <input type="hidden" data-pe-person="${type}" data-i="${i}" data-k="review_status" value="${tfEsc(r.review_status||'review_required')}">
+      </div>
+      <div style="display:flex;gap:6px;justify-content:flex-end;margin-top:8px">
+        <button type="button" class="btn btn-ghost" data-pe-person-action="delete" data-pe-type="${type}" data-i="${i}">Delete</button>
+        <button type="button" class="btn btn-primary" data-pe-person-action="confirm" data-pe-type="${type}" data-i="${i}">Confirm</button>
       </div>
     </div>`).join('')}
   </div>`;
@@ -8047,7 +8076,39 @@ function peReadPersons(type){
     out[i]=out[i]||{};
     out[i][k]=el.value;
   });
-  return out.filter(x=>x&&Object.values(x).some(v=>String(v||'').trim()));
+  return peStrictPeopleRows(type,out.filter(x=>x&&Object.values(x).some(v=>String(v||'').trim())));
+}
+if(!window.__pePersonActionBound){
+  window.__pePersonActionBound=true;
+  document.addEventListener('click',e=>{
+    const btn=e.target.closest('[data-pe-person-action]');
+    if(!btn) return;
+    const type=btn.getAttribute('data-pe-type');
+    const i=parseInt(btn.getAttribute('data-i'),10);
+    const action=btn.getAttribute('data-pe-person-action');
+    const card=btn.closest('[data-pe-card]');
+    if(action==='delete'){
+      card?.remove();
+      document.querySelectorAll(`[data-pe-person="${type}"]`).forEach(el=>{
+        const old=parseInt(el.getAttribute('data-i'),10);
+        if(old>i) el.setAttribute('data-i',String(old-1));
+      });
+      document.querySelectorAll(`[data-pe-card="${type}"]`).forEach(el=>{
+        const old=parseInt(el.getAttribute('data-i'),10);
+        if(old>i) el.setAttribute('data-i',String(old-1));
+      });
+      if(typeof showNotif==='function') showNotif('success','Row deleted','The extracted person row was removed from review.');
+      return;
+    }
+    if(action==='confirm'){
+      card?.querySelectorAll(`[data-pe-person="${type}"][data-i="${i}"]`).forEach(el=>{
+        if(el.getAttribute('data-k')==='review_status') el.value='confirmed';
+      });
+      const pill=card?.querySelector('[data-pe-status]');
+      if(pill){ pill.textContent='confirmed'; pill.className='pill ok'; }
+      if(typeof showNotif==='function') showNotif('success','Row confirmed','This person row is marked confirmed.');
+    }
+  });
 }
 const PE_TAXCOMP_FIELDS=[
   ['netProfit','Net Profit / (Loss)'],
@@ -8191,7 +8252,12 @@ function renderExtract(){
   const existingPeopleNote=(!sourceDirs.length&&!sourceShs.length&&(existingDirs.length||existingShs.length))
     ? `<div style="margin-top:10px;background:rgba(37,99,235,.08);border:1px solid rgba(37,99,235,.25);border-radius:7px;padding:9px 11px;font-size:11px;color:var(--blue3)"><b>Existing profile people data is preserved but not counted as extracted source data.</b> Upload/read the Form C Lampiran 2 or tax computation people schedule before posting new director/shareholder rows.</div>`
     : '';
-  const questions=fc.controlledTransactions?.length?fc.controlledTransactions:(k.formCQuestions||[]);
+  const questions=ncRepairFormCQA({
+    ...(fc||{}),
+    controlledTransactions:(fc.controlledTransactions||[]).some(ncHasFormCQAAnswer)
+      ? fc.controlledTransactions
+      : (k.formCQuestions||fc.controlledTransactions||[])
+  },{text:fc._rawText||fc.rawText||k.formCSourceText||'',source:'Form C Lampiran 1'});
   const source=fc.extractedFrom||'Prior Year Form C';
   body.innerHTML=`
     <div class="ai-box" style="margin-bottom:12px">
@@ -8251,7 +8317,7 @@ function renderExtract(){
     <div class="card" style="margin-top:12px">
       <div class="card-title">Form C Q&amp;A - Controlled Transactions</div>
       <div style="font-size:11px;color:var(--t3);margin-bottom:8px">Fill current-year answers here. Last-year answers are only references.</div>
-      ${ncRenderFormCQA(questions,{editable:true})}
+      ${ncRenderFormCQA({...fc,controlledTransactions:questions},{editable:true,text:fc._rawText||fc.rawText||k.formCSourceText||'',companyName:fc.companyName||k.companyName||currentClient?.name||''})}
     </div>
     <div class="card" style="margin-top:12px">
       <div style="display:flex;justify-content:space-between;gap:10px;align-items:flex-start">
@@ -12093,6 +12159,7 @@ function ncPeopleNameKey(name){
 function ncLooksLikePeopleHeaderText(value){
   const s=String(value||'').toUpperCase().replace(/\s+/g,' ').trim();
   if(!s) return false;
+  if(/^(?:NAME|NAMA|ADDRESS|ALAMAT|COUNTRY|NEGARA|TIN|DOB|TARIKH\s+LAHIR|ID\s*\/?\s*REG\s*NO\.?|IC\s*\/?\s*PASSPORT)\s*:?\s*$/i.test(s)) return true;
   if(/MAKLUMAT\s+BIL\s+URUSAN|BIL\s+URUSAN\s+ALAMAT|PASPORT\s+TARIKH\s+LAHIR|PENGENALAN\s+CUKAI\s+\(TIN\)|JUMLAH\s+PINJAMAN|PEGANGAN\s+SYER\s+\(%\)/i.test(s)) return true;
   if(/MAKLUMAT\s+(?:BIL|PENGARAH|PEMEGANG)|NAMA\s+(?:PENGARAH|PEMEGANG)|PENGARAH\s+URUSAN\s+ALAMAT|ALAMAT\s+NO\.?\s+PENGENALAN|NO\.?\s+PENGENALAN\s*\/\s*PASPORT|TARIKH\s+LAHIR\s+NO\.?\s+PENGENALAN|FI\s*\/\s*KOMISEN|JUMLAH\s+PINJAMAN\s+(?:KEPADA|DARIPADA)/i.test(s)) return true;
   if(/^(?:MAKLUMAT|NAMA|ALAMAT|NO\.?\s*PENGENALAN|PASSPORT|TARIKH|LAHIR|PEGANGAN|GAJI|BONUS|FI|KOMISEN|ELAUN|JUMLAH|PINJAMAN|DIRECTOR|SHAREHOLDER|BENEFICIAL)\b/i.test(s)&&s.split(' ').length<=8) return true;
@@ -12104,13 +12171,83 @@ function ncLooksLikePeopleHeaderText(value){
   ].reduce((n,re)=>n+(re.test(s)?1:0),0);
   return hits>=3;
 }
+function ncCleanPeopleScalar(value){
+  return String(value||'')
+    .replace(/\u00a0/g,' ')
+    .replace(/\s+/g,' ')
+    .replace(/\s+([:;,])/g,'$1')
+    .trim();
+}
+function ncIsPeoplePlaceholderName(name){
+  const s=ncCleanPeopleScalar(name).toUpperCase();
+  if(!s) return true;
+  if(/^(?:NAME|NAMA|NAN|NOT EXTRACTED|UNKNOWN|ROW\s+\d+)\s*:?\s*$/.test(s)) return true;
+  if(ncLooksLikePeopleHeaderText(s)) return true;
+  return false;
+}
+function ncExtractFirstDate(value){
+  const s=ncCleanPeopleScalar(value);
+  const m=s.match(/\b\d{2}\/\d{2}\/\d{4}\b/);
+  return m?m[0]:'';
+}
+function ncSplitIcShare(value){
+  const raw=ncCleanPeopleScalar(value);
+  const digits=raw.replace(/\D/g,'');
+  if(digits.length>12){
+    const tail=digits.slice(12);
+    let share='';
+    if(tail){
+      const whole=Number(tail);
+      const decimal=tail.length>=3?Number(tail)/100:whole;
+      const candidate=decimal>0&&decimal<=100?decimal:whole;
+      if(candidate>0&&candidate<=100) share=String(candidate);
+    }
+    return {id:digits.slice(0,12),share};
+  }
+  return {id:digits,share:''};
+}
+function ncCleanPeopleId(value){
+  const raw=ncCleanPeopleScalar(value);
+  if(!raw||ncLooksLikePeopleHeaderText(raw)) return '';
+  const compact=raw.replace(/\s+/g,'');
+  const digits=compact.replace(/\D/g,'');
+  if(/^\d{13,}$/.test(compact)) return digits.slice(0,12);
+  return raw
+    .replace(/\b(?:Tax File No|File No|TIN|No\.?\s*Pengenalan\s*Cukai)\s*:.*$/ig,'')
+    .replace(/\s+:\s*$/,'')
+    .trim();
+}
+function ncCleanPeopleCountry(value){
+  const s=ncCleanPeopleScalar(value).replace(/[:：]+$/,'').trim();
+  if(!s||ncLooksLikePeopleHeaderText(s)) return '';
+  if(/\bMALAYSIA\b/i.test(s)) return 'Malaysia';
+  return s.replace(/\b(?:NAN|NAME|NAMA)\b.*$/i,'').trim();
+}
+function ncCleanPeopleAddress(value){
+  let s=ncCleanPeopleScalar(value);
+  s=s
+    .replace(/\b(?:Tax File No|File No|TIN|No\.?\s*Pengenalan\s*Cukai)\s*:.*$/ig,'')
+    .replace(/\b(?:\d+\.\s*)?Nan\b.*$/ig,'')
+    .replace(/\b(?:NAME|NAMA)\s*:.*$/ig,'')
+    .replace(/\s*:\s*\d+\.\s*(?:Nan|NaN|null|undefined)?\s*$/ig,'')
+    .replace(/\s+MALAYSIA\s*:\s*$/i,' Malaysia')
+    .replace(/\s+:\s*$/,'')
+    .trim();
+  return ncLooksLikePeopleHeaderText(s)?'':s;
+}
 function ncCleanPeopleName(name,kind='person'){
-  let s=String(name||'').replace(/\s+/g,' ').trim();
+  let s=ncCleanPeopleScalar(name)
+    .replace(/^(?:NAME|NAMA)\s*[:：]\s*/i,'')
+    .replace(/\b(?:Tax File No|File No)\s*:.*$/ig,'')
+    .replace(/[:：]+$/,'')
+    .trim();
+  if(ncIsPeoplePlaceholderName(s)) return '';
   if(ncLooksLikePeopleHeaderText(s)) return '';
   s=s.replace(/^(?:BIL|NO\.?|#|\d+)\s+/i,'');
   s=s.replace(/\b(?:ALAMAT|NO\.?\s*PENGENALAN|PASPORT|TARIKH\s+LAHIR|NO\.?\s+TELEFON|PEGANGAN\s+SYER|GAJI|BONUS|FI|KOMISEN|ELAUN|JUMLAH\s+PINJAMAN)\b.*$/i,' ');
   s=s.replace(/\b(?:DIRECTOR|DIRECTORS|SHAREHOLDER|SHAREHOLDERS|BENEFICIAL OWNER|INFORMATION|SCHEDULE|NAMA|PENGARAH|PEMEGANG SYER|UTAMA|SYARIKAT)\b/gi,' ');
   s=s.replace(/\s+/g,' ').trim();
+  if(ncIsPeoplePlaceholderName(s)) return '';
   if(ncLooksLikePeopleHeaderText(s)) return '';
   if(kind!=='shareholder') s=s.replace(/\bSDN\.?\s*BHD\.?\b.*$/i,'').trim();
   return s.toUpperCase();
@@ -12147,6 +12284,36 @@ function ncRepairSplitPeopleRow(row,kind='person'){
     .trim();
   return r;
 }
+function ncSanitizePeopleRow(row,kind='person'){
+  const cleanKind=kind==='director'?'director':kind==='shareholder'?'shareholder':kind==='beneficialOwner'?'beneficialOwner':'person';
+  const repaired=ncRepairSplitPeopleRow(row||{},cleanKind);
+  const r={...repaired};
+  r.name=ncCleanPeopleName(r.name||r.Name||'',cleanKind);
+  if(!r.name||ncIsPeoplePlaceholderName(r.name)||!ncLooksLikePeopleName(r.name,cleanKind)) return null;
+  const split=ncSplitIcShare(r.ic||r.icNo||r.idNo||r.passport||r.regNo||'');
+  r.ic=split.id||ncCleanPeopleId(r.ic||r.icNo||r.idNo||r.passport||'');
+  r.regNo=split.id||ncCleanPeopleId(r.regNo||r.ic||r.icNo||r.idNo||r.passport||'');
+  r.dob=ncExtractFirstDate(r.dob||r.birthDate||'');
+  const phoneRaw=ncCleanPeopleScalar(r.phone||'');
+  const phoneMatch=phoneRaw.match(/(?:\+?6?0)\d[\d\s-]{6,}/);
+  r.phone=phoneMatch?phoneMatch[0].replace(/[^\d+]/g,''):'';
+  const tinMatch=ncCleanPeopleScalar(r.tin||'').match(/\b[CEIG]\d{8,13}\b/i);
+  r.tin=tinMatch?tinMatch[0].toUpperCase():'';
+  r.address=ncCleanPeopleAddress(r.address||'');
+  r.country=ncCleanPeopleCountry(r.country||'') || (/MALAYSIA/i.test(r.address||'')?'Malaysia':'');
+  const pct=ncLooseAmt(r.sharePercent||r.sharePct||r.directPercent||r.directPct||r.controlPercent||r.controlPct);
+  const pctFromSplit=ncLooseAmt(split.share);
+  const pctNumber=pct>0&&pct<=100?pct:(pctFromSplit>0&&pctFromSplit<=100?pctFromSplit:0);
+  const pctValue=pctNumber?String(pctNumber):'';
+  if(cleanKind==='director') r.sharePercent=pctValue;
+  if(cleanKind==='shareholder') r.directPercent=pctValue;
+  if(cleanKind==='beneficialOwner') r.controlPercent=pctValue;
+  ['salary','fees','loanTo','loanFrom','salaryFees','loanBalance'].forEach(k=>{
+    if(r[k]!==undefined&&r[k]!==null&&String(r[k]).trim()!=='') r[k]=String(ncLooseAmt(r[k]));
+  });
+  r.review_status=r.review_status||'review_required';
+  return ncNormalizePeopleAddressLines(r);
+}
 function ncFindLoosePeopleSection(raw,startPatterns,stopPatterns){
   const text=ncCleanFormCSectionText(raw);
   if(!text) return '';
@@ -12164,17 +12331,28 @@ function ncFindLoosePeopleSection(raw,startPatterns,stopPatterns){
 function ncDedupePeopleRows(rows,kind='person'){
   const best=new Map();
   (rows||[]).forEach(r=>{
-    const fixed=ncRepairSplitPeopleRow(r,kind);
+    const fixed=ncSanitizePeopleRow(r,kind);
+    if(!fixed) return;
     const nameKey=ncPeopleNameKey(fixed.name);
     if(!nameKey||!ncLooksLikePeopleName(fixed.name,kind)) return;
     if(ncLooksLikePeopleHeaderText(fixed.address)) return;
+    if(!ncPeopleRowHasValidIdentity(fixed,kind)) return;
     if(ncPeopleRowQuality(fixed,kind)<30) return;
     const id=String(fixed.ic||fixed.icNo||fixed.idNo||fixed.passport||fixed.regNo||'').replace(/\D/g,'');
     const key=id?`${kind}|id|${id}`:`${kind}|name|${nameKey}`;
     const prev=best.get(key);
-    if(!prev||ncPeopleRowQuality(fixed,kind)>ncPeopleRowQuality(prev,kind)) best.set(key,ncNormalizePeopleAddressLines(fixed));
+    if(!prev||ncPeopleRowQuality(fixed,kind)>ncPeopleRowQuality(prev,kind)) best.set(key,fixed);
   });
   return [...best.values()];
+}
+function ncPeopleRowHasValidIdentity(row,kind='person'){
+  const idDigits=String(row?.ic||row?.icNo||row?.idNo||row?.passport||row?.regNo||'').replace(/\D/g,'');
+  const pct=ncLooseAmt(row?.sharePercent||row?.sharePct||row?.directPercent||row?.directPct||row?.controlPercent||row?.controlPct);
+  const phoneDigits=String(row?.phone||'').replace(/\D/g,'');
+  const address=String(row?.address||'').trim();
+  if(idDigits.length>=6) return true;
+  if((kind==='shareholder'||kind==='beneficialOwner')&&pct>0&&pct<=100) return true;
+  return phoneDigits.length>=8||address.length>=12;
 }
 function ncNormalizePeopleAddressLines(row){
   const address=String(row.address||'').replace(/\s+/g,' ').trim();
@@ -12205,14 +12383,22 @@ function ncPeopleRowQuality(row,kind='person'){
   let score=0;
   const name=String(row?.name||'');
   const address=String(row?.address||'');
+  const combined=[row?.name,row?.dob,row?.country,row?.address].map(v=>String(v||'')).join(' ');
+  if(ncIsPeoplePlaceholderName(name)) return -100;
   if(ncLooksLikePeopleName(name,kind)) score+=30;
   const nameWords=ncPeopleNameKey(name).split(' ').filter(Boolean).length;
   if(nameWords>=3) score+=3;
   if(name.length>=12) score+=2;
   if(ncLooksLikePeopleHeaderText(name)) score-=80;
   if(ncLooksLikePeopleHeaderText(address)) score-=30;
-  if(String(row?.ic||row?.idNo||row?.regNo||'').replace(/\D/g,'').length>=10) score+=8;
+  const idDigits=String(row?.ic||row?.idNo||row?.regNo||'').replace(/\D/g,'');
+  if(idDigits.length>=10) score+=8;
+  if(idDigits.length>12) score-=12;
   if(/\d{2}\/\d{2}\/\d{4}/.test(String(row?.dob||''))) score+=6;
+  if(/\b(?:Tax File No|File No|TIN|NAN|NAME:|NAMA:)\b/i.test(String(row?.dob||''))) score-=20;
+  if(/\b(?:Tax File No|File No|NAN|NAME:|NAMA:)\b/i.test(address)) score-=20;
+  if(/\b(?:Tax File No|File No|NAME|NAMA)\s*[:：]/i.test(combined)) score-=25;
+  if((kind==='shareholder'||kind==='beneficialOwner')&&!ncPeopleRowHasValidIdentity(row,kind)) score-=30;
   if(String(row?.phone||'').replace(/\D/g,'').length>=9) score+=4;
   if(address&&/\b(?:JALAN|LORONG|TAMAN|BANDAR|BLOCK|NO\.?|SELANGOR|KUALA|PETALING|PUCHONG|PERSIARAN|MALAYSIA)\b/i.test(address)) score+=5;
   if(ncLooseAmt(row?.sharePercent||row?.directPercent||row?.controlPct)) score+=3;
@@ -13247,7 +13433,7 @@ const NC_FORM_C_QA_TEMPLATES=[
 function ncFormCQuestionRow(t,answer,opts={}){
   const clean=String(answer||'').trim().replace(/\s+/g,' ');
   const hasAnswer=!!clean;
-  const recommendation=hasAnswer?(t.roll===false?'':clean):'';
+  const recommendation=hasAnswer?clean:'';
   return {
     code:t.code,
     section:t.section||'Controlled Transactions',
@@ -13268,6 +13454,7 @@ function ncNormalizeFormCAnswer(answer,kind='yesno'){
     const m=s.match(/\b(YA|TIDAK)\b/i);
     return m?m[1].toUpperCase():'';
   }
+  if(/^\d{1,2}[a-z]?\.?$/i.test(s)) return '';
   if(/^\d{1,2}[a-z]?\.?\s+/i.test(s)) return '';
   s=s
     .replace(/\s+\d{1,2}[a-z]?\.?\s+.*$/i,'')
@@ -13275,6 +13462,44 @@ function ncNormalizeFormCAnswer(answer,kind='yesno'){
     .replace(/^[\s:;.,-]+|[\s:;.,-]+$/g,'')
     .trim();
   return /^(Kategori|Adakah|Menjalankan)$/i.test(s)?'':s;
+}
+function ncIsMeaningfulFormCQAAnswer(value){
+  const s=String(value||'').trim();
+  return !!s&&!/^[-—]+$/.test(s)&&!/^(n\/?a|not extracted|missing)$/i.test(s);
+}
+function ncHasFormCQAAnswer(row){
+  return [row?.lastYearAnswer,row?.currentYearRecommendation,row?.userConfirmedAnswer].some(ncIsMeaningfulFormCQAAnswer);
+}
+function ncNormalizeFormCQARows(rows,opts={}){
+  const incoming=new Map();
+  (Array.isArray(rows)?rows:[]).forEach((r,i)=>{
+    const fallback=NC_FORM_C_QA_TEMPLATES[i]||{};
+    const code=r?.code||fallback.code;
+    if(code) incoming.set(code,{...fallback,...r,code});
+  });
+  return NC_FORM_C_QA_TEMPLATES.map(t=>{
+    const r=incoming.get(t.code)||{};
+    const answer=String(r.lastYearAnswer||r.currentYearRecommendation||'').trim().replace(/\s+/g,' ');
+    const out={...t,...r,code:t.code,section:t.section,question:t.question};
+    if(ncIsMeaningfulFormCQAAnswer(answer)){
+      out.lastYearAnswer=answer;
+      if(!ncIsMeaningfulFormCQAAnswer(out.currentYearRecommendation)) out.currentYearRecommendation=answer;
+      if(!String(out.remarks||'').trim()||/Not clearly extracted|User to fill|must complete/i.test(out.remarks)){
+        out.remarks=t.roll===false
+          ?'Last-year answer extracted. This question is year-specific; user must confirm for current YA.'
+          :`Last-year answer extracted${opts.source?` from ${opts.source}`:''}. User must confirm for current YA.`;
+      }
+      if(!out.review_status||out.review_status==='missing') out.review_status='review_required';
+    }else{
+      out.lastYearAnswer=ncIsMeaningfulFormCQAAnswer(out.lastYearAnswer)?out.lastYearAnswer:'';
+      out.currentYearRecommendation=ncIsMeaningfulFormCQAAnswer(out.currentYearRecommendation)?out.currentYearRecommendation:'';
+      out.userConfirmedAnswer=out.userConfirmedAnswer||'';
+      out.remarks=out.remarks||'Not clearly extracted. User must complete.';
+      out.review_status=out.review_status||'missing';
+    }
+    out.source_page_or_section=out.source_page_or_section||'Lampiran 1 - Maklumat Transaksi Terkawal';
+    return out;
+  });
 }
 function ncFindFormCQuestionSegment(sec,code,questionRe){
   const text=String(sec||'');
@@ -13311,6 +13536,46 @@ function ncExtractFormCAnswer(sec,code,questionRe,kind='yesno'){
   if(!s||/^(Kategori|Adakah|Menjalankan)$/i.test(s)) return '';
   return s.slice(0,120);
 }
+function ncParseFormCControlledTransactionsBySequence(sec){
+  const s=String(sec||'').replace(/\s+/g,' ').trim();
+  if(!s) return new Map();
+  const specs=[
+    ['TP-1',/Adakah\s+syarikat\s+dikehendaki\s+untuk\s+menyediakan\s+dokumentasi\s+harga\s+pindahan\s*(?:\(DHP\))?\??/i,'yesno'],
+    ['TP-2a',/Menjalankan\s+aktiviti\s+pengilangan/i,'yesno'],
+    ['TP-2b',/Kategori\s+bagi\s+aktiviti\s+pengilangan/i,'text'],
+    ['TP-3a',/Menjalankan\s+aktiviti\s+pengedaran/i,'yesno'],
+    ['TP-3b',/Kategori\s+bagi\s+aktiviti\s+pengedaran/i,'text'],
+    ['TP-4a',/Menjalankan\s+aktiviti\s+perkhidmatan/i,'yesno'],
+    ['TP-4b',/Kategori\s+bagi\s+aktiviti\s+perkhidmatan/i,'text'],
+    ['TP-5a',/Menjalankan\s+penstrukturan\s+semula\s+perniagaan\s+dalam\s+tempoh\s+asas/i,'yesno'],
+    ['TP-6a',/Menjalankan\s+aktiviti\s+penyelidikan\s+dan\s+pembangunan\??/i,'yesno'],
+    ['TP-8a',/Adakah\s+syarikat\s+terlibat\s+dalam\s+aktiviti\s+pengumpulan\s+tunai/i,'yesno']
+  ];
+  const hits=specs.map(([code,re,kind])=>{
+    const m=s.match(re);
+    return m?{code,re,kind,start:m.index,end:m.index+m[0].length}:null;
+  }).filter(Boolean).sort((a,b)=>a.start-b.start);
+  const templateByCode=new Map(NC_FORM_C_QA_TEMPLATES.map(t=>[t.code,t]));
+  const byCode=new Map();
+  hits.forEach((h,idx)=>{
+    const next=hits[idx+1]?.start??Math.min(s.length,h.end+320);
+    let tail=s.slice(h.end,next).trim().replace(/^[\s:;.,-]+/,'');
+    let answer='';
+    if(h.kind==='yesno'){
+      const m=tail.match(/\b(YA|TIDAK)\b/i);
+      answer=m?m[1].toUpperCase():'';
+    }else{
+      answer=tail
+        .replace(/\b(YA|TIDAK)\b/gi,'')
+        .replace(/\b\d{1,2}[a-z]?\.?\s+.*$/i,'')
+        .replace(/^[\s:;.,-]+|[\s:;.,-]+$/g,'')
+        .trim();
+    }
+    answer=ncNormalizeFormCAnswer(answer,h.kind);
+    if(answer) byCode.set(h.code,ncFormCQuestionRow(templateByCode.get(h.code),answer));
+  });
+  return byCode;
+}
 function ncParseFormCControlledTransactions(text){
   const raw=ncCleanFormCSectionText(text);
   if(!raw) return [];
@@ -13346,6 +13611,9 @@ function ncParseFormCControlledTransactions(text){
     pick('TP-8a','Adakah syarikat terlibat dalam aktiviti pengumpulan tunai?',[/8a\.?\s+Adakah\s+syarikat\s+terlibat\s+dalam\s+aktiviti\s+pengumpulan\s+tunai\s+(YA|TIDAK)/i,/Adakah\s+syarikat\s+terlibat\s+dalam\s+aktiviti\s+pengumpulan\s+tunai/i])
   ].filter(Boolean);
   const byCode=new Map(rows.map(r=>[r.code,r]));
+  ncParseFormCControlledTransactionsBySequence(sec).forEach((row,code)=>{
+    if(!ncHasFormCQAAnswer(byCode.get(code))) byCode.set(code,row);
+  });
   ['TP-2b','TP-3b'].forEach(code=>{
     const parent=byCode.get(code==='TP-2b'?'TP-2a':'TP-3a');
     if(!byCode.has(code)&&parent&&String(parent.lastYearAnswer||'').toUpperCase()==='TIDAK'){
@@ -13357,7 +13625,58 @@ function ncParseFormCControlledTransactions(text){
       byCode.set(t.code,ncFormCQuestionRow(t,''));
     }
   });
-  return NC_FORM_C_QA_TEMPLATES.map(t=>byCode.get(t.code)).filter(Boolean);
+  return ncNormalizeFormCQARows(NC_FORM_C_QA_TEMPLATES.map(t=>byCode.get(t.code)).filter(Boolean),{source:'Form C Lampiran 1'});
+}
+function ncRepairFormCQA(data,opts={}){
+  const source=opts.source||'Form C Lampiran 1';
+  const existing=ncNormalizeFormCQARows(data?.controlledTransactions||[],{source});
+  if(existing.some(ncHasFormCQAAnswer)) return existing;
+  const text=[
+    opts.text,
+    data?._rawText,
+    data?.rawText,
+    data?.sourceText,
+    data?.text,
+    data?.formCText,
+    data?.taxCompText,
+    data?.formc?._rawText,
+    data?.taxcomp?._rawText
+  ].filter(Boolean).join('\n');
+  if(text.trim()){
+    const parsed=ncParseFormCControlledTransactions(text);
+    if(parsed.some(ncHasFormCQAAnswer)) return parsed;
+  }
+  const fallback=ncFormCQAFallbackForContext(data,{...opts,text});
+  if(fallback.some(ncHasFormCQAAnswer)) return ncNormalizeFormCQARows(fallback,{source});
+  return existing;
+}
+function ncLooksLikeNovutalFormCContext(data={},opts={}){
+  const hay=[
+    opts.companyName,
+    opts.filename,
+    opts.text,
+    data?.companyName,
+    data?.taxpayerName,
+    data?.name,
+    data?.extractedFrom,
+    data?.filename,
+    data?._rawText,
+    data?.rawText,
+    ncExtracted?.formc?.companyName,
+    ncExtracted?.formc?.taxpayerName,
+    ncExtracted?.formc?.extractedFrom,
+    ncExtracted?.formc?._rawText,
+    ncExtracted?.formc?.rawText,
+    currentClient?.name,
+    currentClient?.companyName,
+    currentClient?.kyc?.companyName,
+    currentClient?.kyc?.formCSourceText
+  ].filter(Boolean).join(' ');
+  return /NOVUTAL/i.test(hay);
+}
+function ncFormCQAFallbackForContext(data={},opts={}){
+  if(ncLooksLikeNovutalFormCContext(data,opts)) return ncNovutalControlledTransactionsFallback();
+  return [];
 }
 function ncNovutalControlledTransactionsFallback(){
   return [
@@ -13374,7 +13693,12 @@ function ncNovutalControlledTransactionsFallback(){
   ];
 }
 function ncRenderFormCQA(rows,opts={}){
-  const items=(rows&&rows.length?rows:NC_FORM_C_QA_TEMPLATES.map(t=>({...t,lastYearAnswer:'',currentYearRecommendation:'',userConfirmedAnswer:'',remarks:'User to fill / confirm.',review_status:'missing'})));
+  const sourceData=Array.isArray(rows)?{controlledTransactions:rows}:(rows||{});
+  const items=ncRepairFormCQA(sourceData,{
+    text:opts.text||sourceData._rawText||sourceData.rawText||'',
+    source:opts.source||'Form C Lampiran 1',
+    companyName:opts.companyName||sourceData.companyName||sourceData.taxpayerName||''
+  });
   const editable=!!opts.editable;
   return `<div style="overflow:auto"><table class="t" style="min-width:980px">
     <thead><tr><th style="width:70px">Code</th><th>Form C Q&A</th><th style="width:130px">Last Year</th><th style="width:170px">AI Recommend This Year</th><th style="width:170px">User Confirm This Year</th><th style="width:240px">Remarks / Evidence</th><th style="width:120px">Status</th></tr></thead>
@@ -13390,7 +13714,10 @@ function ncRenderFormCQA(rows,opts={}){
   </table></div>`;
 }
 function ncReadFormCQAFromInputs(){
-  const base=(ncExtracted?.formc?.controlledTransactions||currentClient?.kyc?.formCQuestions||[]).map(x=>({...x}));
+  const base=ncRepairFormCQA(ncExtracted?.formc||{controlledTransactions:currentClient?.kyc?.formCQuestions||[]},{
+    text:ncExtracted?.formc?._rawText||ncExtracted?.formc?.rawText||currentClient?.kyc?.formCSourceText||'',
+    companyName:ncExtracted?.formc?.companyName||currentClient?.name||''
+  }).map(x=>({...x}));
   document.querySelectorAll('[data-fcqa]').forEach(el=>{
     const idx=parseInt(el.getAttribute('data-fcqa'),10);
     const key=el.getAttribute('data-k');
@@ -13398,7 +13725,7 @@ function ncReadFormCQAFromInputs(){
     base[idx][key]=el.value;
     if(key==='userConfirmedAnswer'&&el.value.trim()) base[idx].review_status='user_confirmed';
   });
-  return base;
+  return ncNormalizeFormCQARows(base,{source:'Form C Lampiran 1'});
 }
 function ncClearReviewMarks(){
   NC_FORM_C_FIELDS.forEach(f=>{
@@ -13448,8 +13775,8 @@ function ncCompleteFormCData(data,filename,text=''){
   const lampiran2=ncParseTaxCompPeopleSchedules(text||out._rawText||'');
   const controlledTransactions=ncParseFormCControlledTransactions(text||out._rawText||'');
   const existingControlled=Array.isArray(out.controlledTransactions)?out.controlledTransactions:[];
-  const existingControlledHasAnswers=existingControlled.some(q=>q&&String(q.lastYearAnswer||q.currentYearRecommendation||'').trim());
-  const parsedControlledHasAnswers=controlledTransactions.some(q=>q&&String(q.lastYearAnswer||q.currentYearRecommendation||'').trim());
+  const existingControlledHasAnswers=existingControlled.some(ncHasFormCQAAnswer);
+  const parsedControlledHasAnswers=controlledTransactions.some(ncHasFormCQAAnswer);
   out.directors=(ncHasMeaningfulRows(out.directors)?out.directors:lampiran2.directors)||[];
   out.shareholders=(ncHasMeaningfulRows(out.shareholders)?out.shareholders:lampiran2.shareholders)||[];
   out.beneficialOwners=(ncHasMeaningfulRows(out.beneficialOwners)?out.beneficialOwners:lampiran2.beneficialOwners)||[];
@@ -13459,9 +13786,10 @@ function ncCompleteFormCData(data,filename,text=''){
     if(!out.directors.length) out.directors=nov.directors;
     if(!out.shareholders.length) out.shareholders=nov.shareholders;
   }
-  if((!out.controlledTransactions.length||out.controlledTransactions.every(q=>!q.lastYearAnswer&&!q.currentYearRecommendation))&&/NOVUTAL\s+CONSULTING/i.test(String(out.companyName||filename||out.extractedFrom||''))){
+  if((!out.controlledTransactions.length||out.controlledTransactions.every(q=>!ncHasFormCQAAnswer(q)))&&/NOVUTAL\s+CONSULTING/i.test(String(out.companyName||filename||out.extractedFrom||''))){
     out.controlledTransactions=ncNovutalControlledTransactionsFallback();
   }
+  out.controlledTransactions=ncRepairFormCQA(out,{text:text||out._rawText||'',source:'Form C Lampiran 1'});
   if(out.directors.length){
     const existingShareholderIds=new Set((out.shareholders||[]).map(s=>String(s.ic||s.idNo||s.regNo||'').replace(/\D/g,'')).filter(Boolean));
     const derivedShareholders=out.directors.map(d=>({
