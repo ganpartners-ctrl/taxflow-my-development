@@ -5192,6 +5192,186 @@ function renderTaxInstalmentNotice(previewId=''){
 // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // FORM C
 // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// ═══════════════════════════════════════════════════════════════════
+// HIRE PURCHASE SCHEDULE -- full Summary + per-asset Detail, matching
+// the standard "Summary of Hire Purchase Creditors" and per-asset
+// "Hire Purchase Creditors Schedule" format (finance terms + year-by-
+// year payment breakdown with No. of Inst / Principal / Interest).
+// ═══════════════════════════════════════════════════════════════════
+function hpEnsureSchedule(){
+  if(!currentYA) return [];
+  if(!Array.isArray(currentYA.hpSchedule)){
+    // Migrate from whatever was previously extracted, if anything.
+    const extracted=ncExtracted?.taxcomp?.hpAssets||[];
+    currentYA.hpSchedule=extracted.map((a,i)=>({
+      id:'hp'+Date.now()+i,
+      description:a.description||a.asset||'HP asset (required -- fill in)',
+      originalCost:ncNum(a.originalCost||a.qe)||0,
+      dateOfPurchase:a.dateOfPurchase||'',
+      depositAmount:ncNum(a.depositAmount)||0,
+      totalInstalments:ncNum(a.totalInstalments)||0,
+      interestAmount:ncNum(a.interestAmount||a.interest)||0,
+      monthlyInstalment:ncNum(a.monthlyInstalment)||0,
+      finalInstalment:ncNum(a.finalInstalment)||0,
+      principalAmount:ncNum(a.principalAmount||a.principal||a.qe)||0,
+      vehicleType:a.vehicleType||'none',
+      qualifyAmount:ncNum(a.qualifyAmount)||0,
+      yearlyPayments:Array.isArray(a.yearlyPayments)?a.yearlyPayments:[],
+      requiresReview:true,
+    }));
+  }
+  return currentYA.hpSchedule;
+}
+// Computes the Summary row for one asset: Balance B/F (cumulative
+// payments strictly before this YA), Addition (this asset's QE if
+// acquired in this YA), Payment made during the year (the yearly row
+// matching this YA), and Balance C/F -- matching the reference
+// document's Summary of Hire Purchase Creditors columns exactly.
+function hpCalculateAssetSummary(asset,ya){
+  ya=Number(ya);
+  const payments=asset.yearlyPayments||[];
+  const bf=payments.filter(p=>Number(p.year)<ya).reduce((acc,p)=>({
+    noOfInst:acc.noOfInst+(Number(p.noOfInst)||0),
+    principal:acc.principal+(Number(p.principal)||0),
+    interest:acc.interest+(Number(p.interest)||0),
+  }),{noOfInst:0,principal:0,interest:0});
+  const thisYear=payments.find(p=>Number(p.year)===ya)||{noOfInst:0,principal:0,interest:0};
+  const purchaseYear=asset.dateOfPurchase?new Date(asset.dateOfPurchase).getFullYear():null;
+  const isAddition=purchaseYear===ya;
+  const addition=isAddition?{principal:Number(asset.principalAmount)||0,interest:Number(asset.interestAmount)||0}:{principal:0,interest:0};
+  const principalAmount=Number(asset.principalAmount)||0;
+  const interestAmount=Number(asset.interestAmount)||0;
+  const cfPrincipal=Math.max(0,principalAmount-bf.principal-Number(thisYear.principal||0));
+  const cfInterest=Math.max(0,interestAmount-bf.interest-Number(thisYear.interest||0));
+  return {bf,thisYear,addition,cf:{principal:cfPrincipal,interest:cfInterest},isAddition};
+}
+function hpAddAsset(){
+  const list=hpEnsureSchedule();
+  list.push({id:'hp'+Date.now(),description:'New HP asset (required -- fill in)',originalCost:0,dateOfPurchase:'',depositAmount:0,totalInstalments:0,interestAmount:0,monthlyInstalment:0,finalInstalment:0,principalAmount:0,vehicleType:'none',qualifyAmount:0,yearlyPayments:[],requiresReview:true});
+  tfSaveState();
+  renderHPScheduleFull();
+}
+function hpDeleteAsset(id){
+  if(!confirm('Delete this HP asset from the schedule?')) return;
+  const list=hpEnsureSchedule();
+  const idx=list.findIndex(a=>a.id===id);
+  if(idx>=0) list.splice(idx,1);
+  tfSaveState();
+  renderHPScheduleFull();
+}
+function hpUpdateAssetField(id,field,value){
+  const list=hpEnsureSchedule();
+  const asset=list.find(a=>a.id===id);
+  if(!asset) return;
+  const numericFields=['originalCost','depositAmount','totalInstalments','interestAmount','monthlyInstalment','finalInstalment','principalAmount','qualifyAmount'];
+  asset[field]=numericFields.includes(field)?ncNum(value):value;
+  if(field!=='description'||value!=='New HP asset (required -- fill in)') asset.requiresReview=false;
+  tfSaveState();
+  renderHPScheduleFull();
+}
+function hpAddPaymentYear(id){
+  const list=hpEnsureSchedule();
+  const asset=list.find(a=>a.id===id);
+  if(!asset) return;
+  asset.yearlyPayments=asset.yearlyPayments||[];
+  asset.yearlyPayments.push({year:currentYA?.ya||new Date().getFullYear(),noOfInst:0,principal:0,interest:0,total:0,qe:0,remark:''});
+  tfSaveState();
+  renderHPScheduleFull();
+}
+function hpUpdatePaymentYear(id,idx,field,value){
+  const list=hpEnsureSchedule();
+  const asset=list.find(a=>a.id===id);
+  if(!asset||!asset.yearlyPayments[idx]) return;
+  const numericFields=['year','noOfInst','principal','interest','total','qe'];
+  asset.yearlyPayments[idx][field]=numericFields.includes(field)?ncNum(value):value;
+  if(field==='principal'||field==='interest') asset.yearlyPayments[idx].total=ncNum(asset.yearlyPayments[idx].principal)+ncNum(asset.yearlyPayments[idx].interest);
+  tfSaveState();
+  renderHPScheduleFull();
+}
+function hpDeletePaymentYear(id,idx){
+  const list=hpEnsureSchedule();
+  const asset=list.find(a=>a.id===id);
+  if(!asset) return;
+  asset.yearlyPayments.splice(idx,1);
+  tfSaveState();
+  renderHPScheduleFull();
+}
+function renderHPScheduleFull(){
+  const hpEl=document.getElementById('tcHPSched');
+  if(!hpEl) return;
+  const c=currentClient,y=currentYA;
+  if(!c||!y){hpEl.innerHTML=`<div style="padding:24px;text-align:center;color:var(--t3);font-size:13px">Select a client to view the HP schedule</div>`;return;}
+  const list=hpEnsureSchedule();
+  const ya=y.ya;
+  const vehicleTypeOptions=[['none','Not a vehicle'],['commercial','Commercial vehicle (no restriction)'],['private-new','Private, new'],['private-used','Private, used']];
+
+  // ── Summary table (matches "Summary of Hire Purchase Creditors") ──
+  let sumTotals={bfNoInst:0,bfPrincipal:0,bfInterest:0,addPrincipal:0,addInterest:0,payNoInst:0,payPrincipal:0,payInterest:0,cfPrincipal:0,cfInterest:0};
+  const summaryRows=list.map(a=>{
+    const s=hpCalculateAssetSummary(a,ya);
+    sumTotals.bfNoInst+=s.bf.noOfInst;sumTotals.bfPrincipal+=s.bf.principal;sumTotals.bfInterest+=s.bf.interest;
+    sumTotals.addPrincipal+=s.addition.principal;sumTotals.addInterest+=s.addition.interest;
+    sumTotals.payNoInst+=Number(s.thisYear.noOfInst)||0;sumTotals.payPrincipal+=Number(s.thisYear.principal)||0;sumTotals.payInterest+=Number(s.thisYear.interest)||0;
+    sumTotals.cfPrincipal+=s.cf.principal;sumTotals.cfInterest+=s.cf.interest;
+    return `<tr>
+      <td>${tfEsc(a.description)}${a.requiresReview?' <span class="badge b-amber" style="font-size:9px">Required</span>':''}</td>
+      <td class="r m">${f(a.originalCost)}</td><td class="r m">${f(a.depositAmount)}</td><td class="r m">${f(a.principalAmount)}</td>
+      <td class="r m">${s.bf.noOfInst}</td><td class="r m">${f(s.bf.principal)}</td><td class="r m">${f(s.bf.interest)}</td>
+      <td class="r m">${f(s.addition.principal)}</td><td class="r m">${f(s.addition.interest)}</td>
+      <td class="r m">${s.thisYear.noOfInst||0}</td><td class="r m">${f(s.thisYear.principal)}</td><td class="r m">${f(s.thisYear.interest)}</td>
+      <td class="r m">${f(s.cf.principal)}</td><td class="r m">${f(s.cf.interest)}</td>
+    </tr>`;
+  }).join('');
+  const summaryHtml=`<div class="card al">
+    ${tcScheduleHeader('SUMMARY OF HIRE PURCHASE CREDITORS SCHEDULE')}
+    <div style="display:flex;gap:8px;margin-bottom:10px"><button class="btn btn-primary btn-sm" onclick="hpAddAsset()">+ Add HP Asset</button></div>
+    <div style="overflow:auto;border:1px solid var(--line);border-radius:8px">
+    <table class="t" style="min-width:1400px"><thead>
+      <tr><th rowspan="2">Description</th><th rowspan="2">Original Cost</th><th rowspan="2">Deposit</th><th rowspan="2">Principal Q.E.</th>
+        <th colspan="3">Balance B/F</th><th colspan="2">Addition</th><th colspan="3">Payment Made During Year</th><th colspan="2">Balance C/F</th></tr>
+      <tr><th>No. Inst</th><th>Principal</th><th>Interest</th><th>Principal</th><th>Interest</th><th>No. Inst</th><th>Principal</th><th>Interest</th><th>Principal</th><th>Interest</th></tr>
+    </thead><tbody>${summaryRows||`<tr><td colspan="14" style="text-align:center;padding:18px;color:var(--t3)">No HP assets yet -- click "+ Add HP Asset" or upload a tax computation.</td></tr>`}
+      <tr class="tot"><td colspan="4">GRAND TOTAL</td><td class="r m">${sumTotals.bfNoInst}</td><td class="r m">${f(sumTotals.bfPrincipal)}</td><td class="r m">${f(sumTotals.bfInterest)}</td><td class="r m">${f(sumTotals.addPrincipal)}</td><td class="r m">${f(sumTotals.addInterest)}</td><td class="r m">${sumTotals.payNoInst}</td><td class="r m">${f(sumTotals.payPrincipal)}</td><td class="r m">${f(sumTotals.payInterest)}</td><td class="r m">${f(sumTotals.cfPrincipal)}</td><td class="r m">${f(sumTotals.cfInterest)}</td></tr>
+    </tbody></table></div>
+  </div>`;
+
+  // ── Per-asset Detail cards (matches per-asset "Hire Purchase Creditors Schedule" pages) ──
+  const detailHtml=list.map(a=>{
+    const restriction=(a.vehicleType&&a.vehicleType!=='none'&&a.vehicleType!=='commercial')?caMotorVehicleRestrictedQE(a.originalCost,a.vehicleType):null;
+    return `<div class="card al" style="margin-top:14px">
+      <div style="display:flex;justify-content:space-between;align-items:start;margin-bottom:10px">
+        <input class="fi" style="font-size:14px;font-weight:700;width:320px" value="${tfEsc(a.description)}" onchange="hpUpdateAssetField('${a.id}','description',this.value)">
+        <button class="btn btn-ghost btn-sm" style="color:var(--red3)" onclick="hpDeleteAsset('${a.id}')">Delete Asset</button>
+      </div>
+      <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:12px">
+        ${[['originalCost','Original Cost (RM)'],['dateOfPurchase','Date of Purchase'],['depositAmount','Deposit Amount (RM)'],['totalInstalments','Total Instalments (No.)'],
+           ['interestAmount','Interest Amount (RM)'],['monthlyInstalment','Monthly Instalment (RM)'],['finalInstalment','Final Instalment (RM)'],['principalAmount','Principal Amount (RM)']]
+          .map(([k,label])=>`<div><label class="fl" style="font-size:10px">${label}</label><input class="fi" type="${k==='dateOfPurchase'?'date':'number'}" step="0.01" value="${tfEsc(a[k])}" onchange="hpUpdateAssetField('${a.id}','${k}',this.value)"></div>`).join('')}
+      </div>
+      <div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-bottom:12px">
+        <div><label class="fl" style="font-size:10px">Vehicle / Asset Type</label><select class="fi" onchange="hpUpdateAssetField('${a.id}','vehicleType',this.value)">${vehicleTypeOptions.map(([v,l])=>`<option value="${v}" ${a.vehicleType===v?'selected':''}>${tfEsc(l)}</option>`).join('')}</select></div>
+        <div><label class="fl" style="font-size:10px">Qualify Amount (RM) -- restricted QE for CA purposes</label><input class="fi" type="number" step="0.01" value="${tfEsc(a.qualifyAmount||(restriction?restriction.qe:''))}" placeholder="${restriction?f(restriction.qe):''}" onchange="hpUpdateAssetField('${a.id}','qualifyAmount',this.value)"></div>
+      </div>
+      ${restriction?.restricted?`<div style="font-size:11px;color:var(--amber3);margin-bottom:10px">\u26a0 ${tfEsc(restriction.note)}</div>`:''}
+      <div style="font-size:11px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:.4px;margin-bottom:6px">Payment Information</div>
+      <div style="overflow:auto;border:1px solid var(--line);border-radius:8px;margin-bottom:8px">
+      <table class="t" style="min-width:700px"><thead><tr><th>Year</th><th>No. of Inst.</th><th>Principal (RM)</th><th>Interest (RM)</th><th>Total (RM)</th><th>Q.E. (RM)</th><th>Remark</th><th></th></tr></thead>
+      <tbody>${(a.yearlyPayments||[]).map((p,pi)=>`<tr>
+        <td><input class="fi" type="number" value="${p.year}" onchange="hpUpdatePaymentYear('${a.id}',${pi},'year',this.value)" style="width:70px"></td>
+        <td><input class="fi" type="number" value="${p.noOfInst}" onchange="hpUpdatePaymentYear('${a.id}',${pi},'noOfInst',this.value)" style="width:60px"></td>
+        <td><input class="fi" type="number" step="0.01" value="${p.principal}" onchange="hpUpdatePaymentYear('${a.id}',${pi},'principal',this.value)" style="width:100px"></td>
+        <td><input class="fi" type="number" step="0.01" value="${p.interest}" onchange="hpUpdatePaymentYear('${a.id}',${pi},'interest',this.value)" style="width:100px"></td>
+        <td class="r m">${f(ncNum(p.principal)+ncNum(p.interest))}</td>
+        <td><input class="fi" type="number" step="0.01" value="${p.qe||0}" onchange="hpUpdatePaymentYear('${a.id}',${pi},'qe',this.value)" style="width:90px"></td>
+        <td><input class="fi" value="${tfEsc(p.remark||'')}" onchange="hpUpdatePaymentYear('${a.id}',${pi},'remark',this.value)" style="width:120px"></td>
+        <td><button class="btn btn-ghost btn-sm" style="color:var(--red3)" onclick="hpDeletePaymentYear('${a.id}',${pi})">\u00d7</button></td>
+      </tr>`).join('')||`<tr><td colspan="8" style="text-align:center;padding:10px;color:var(--t3)">No payment years yet.</td></tr>`}</tbody></table></div>
+      <button class="btn btn-ghost btn-sm" onclick="hpAddPaymentYear('${a.id}')">+ Add Payment Year</button>
+    </div>`;
+  }).join('');
+
+  hpEl.innerHTML=summaryHtml+detailHtml;
+}
 function buildTCSchedulesFull(){
   const c=currentClient, y=currentYA;
   const targets=['tcIntSched','tcCASched','tcHPSched','tcShSched','tcDirSched','tcBoSched'].map(id=>document.getElementById(id));
@@ -5249,19 +5429,8 @@ function buildTCSchedulesFull(){
       :empty('Capital Allowance','Upload or import the CA schedule to populate this tab.');
   }
 
-  const hpEl=document.getElementById('tcHPSched');
-  if(hpEl&&!hpEl.innerHTML){
-    const hpAssets=ncExtracted?.taxcomp?.hpAssets||[];
-    const rows=hpAssets.length?hpAssets.map(a=>`
-      <tr><td style="padding:8px 10px;border-bottom:1px solid rgba(28,47,72,.2)">${a.description||a.asset||'HP asset'}</td>
-      <td style="padding:8px 10px;border-bottom:1px solid rgba(28,47,72,.2);font-family:'IBM Plex Mono',monospace">${a.account||'-'}</td>
-      <td style="padding:8px 10px;border-bottom:1px solid rgba(28,47,72,.2);text-align:right;font-family:'IBM Plex Mono',monospace">${f(a.principal||0)}</td></tr>`)
-      :[`<tr><td style="padding:8px 10px;border-bottom:1px solid rgba(28,47,72,.2)">HP principal add-back</td><td style="padding:8px 10px;border-bottom:1px solid rgba(28,47,72,.2);font-family:'IBM Plex Mono',monospace">S.39(1)</td><td style="padding:8px 10px;border-bottom:1px solid rgba(28,47,72,.2);text-align:right;font-family:'IBM Plex Mono',monospace">${f(y.hpPrincipal||77684)}</td></tr>`];
-    const total=hpAssets.reduce((s,a)=>s+(a.principal||0),0)||(y.hpPrincipal||77684);
-    hpEl.innerHTML=table('Hire Purchase Schedule',
-      [{label:'Description'},{label:'Reference'},{label:'Principal (RM)',align:'right'}],
-      rows,'Total HP Principal Add-Back','RM '+f(total),'var(--amber3)');
-  }
+  renderHPScheduleFull();
+
 
   const info=tcEnsureInfoSchedules();
   const shEl=document.getElementById('tcShSched');
