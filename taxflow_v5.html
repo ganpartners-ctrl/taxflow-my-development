@@ -1572,13 +1572,17 @@ const TAX_RULINGS_REGISTRY=[
     id:'small_value_asset',
     name:'Small Value Asset -- 100% Capital Allowance',
     category:'capital_allowance',
-    citation:'Income Tax (Qualifying Plant Allowances)(Small Value Assets) Rules -- SME threshold typically higher',
+    citation:'Schedule 3, Para 19A, ITA 1967; Public Ruling 3/2021',
     detectKeywords:/\b(small value asset)\b/i,
-    treatment:'100% capital allowance in the year of purchase for qualifying small value assets. General cap is RM2,000 per asset with a RM20,000 total annual cap; the total cap does not apply to companies qualifying as SMEs (confirm SME status for the YA).',
+    treatment:'100% capital allowance in the year of purchase for qualifying small value assets. Per-asset threshold RM2,000, total annual cap RM20,000 (from YA2020) -- the total cap does NOT apply to companies qualifying as SMEs (confirm SME status for the YA).',
     presentationNote:'List each qualifying small-value asset individually with its own 100% write-off, not lumped into a general Plant & Machinery pool.',
-    queryQuestions:['Does the company qualify as an SME for this YA (paid-up capital \u2264RM2.5 million and gross income threshold)? This affects whether the RM20,000 total cap applies.','Is each item genuinely under the per-asset cost threshold, or has an invoice been split to stay under it?'],
+    queryQuestions:['Does the company qualify as an SME for this YA (paid-up capital \u2264RM2.5 million and gross income \u2264RM50 million)? This affects whether the RM20,000 total cap applies.','Is each item genuinely under the per-asset cost threshold, or has an invoice been split to stay under it?'],
     supportingDocs:['Purchase invoices for each item claimed','SME status confirmation (paid-up capital, group structure) if relying on the SME exception to the total cap'],
     eligibilityPeriod:{type:'per-asset',description:'Fully written off in the year of purchase -- one-off, not a multi-year claim.'},
+    rateHistory:[
+      {fromYA:2018,toYA:2019,value:'Per-asset threshold RM1,300; total annual cap RM13,000.'},
+      {fromYA:2020,toYA:null,value:'Per-asset threshold raised to RM2,000; total annual cap raised to RM20,000. SME exception to the total cap introduced (PR 3/2021).'},
+    ],
     verifyCurrentRate:true,
     requiresApproval:false,
   },
@@ -1658,11 +1662,132 @@ const TAX_RULINGS_REGISTRY=[
     category:'deduction',
     citation:'Income Tax (Deduction for Expenses in relation to Secretarial Fee and Tax Filing Fee) Rules -- combined RM15,000 cap per YA (current rule, YA2020 onwards)',
     detectKeywords:/\b(audit fee|secretarial fee|tax fee|tax agent fee|tax filing fee)\b/i,
-    treatment:'Audit fee is deductible in full as a normal business expense. Secretarial fee and tax filing fee are deductible subject to a COMBINED cap of RM15,000 per YA (current rule -- confirm this has not been amended in a later Budget).',
+    treatment:'Audit fee is deductible in full as a normal business expense. Secretarial fee and tax filing fee are deductible subject to a COMBINED cap of RM15,000 per YA (current rule, from YA2020 -- confirm this has not been amended in a later Budget).',
     presentationNote:'Show audit fee as an ordinary deduction; show secretarial + tax filing fee combined against the RM15,000 cap explicitly, so it is clear if the cap has been exceeded (excess is disallowed).',
-    queryQuestions:['What is the combined secretarial fee and tax filing fee for this YA -- does it exceed RM15,000?'],
+    queryQuestions:['What is the combined secretarial fee and tax filing fee for this YA -- does it exceed RM15,000?','For YA2019 or earlier: what were the SEPARATE secretarial fee and tax filing fee amounts (different cap rules applied before YA2020)?'],
     supportingDocs:['Audit fee invoice','Secretarial fee invoice(s)','Tax agent fee invoice(s)'],
-    eligibilityPeriod:{type:'annual',description:'Assessed fresh each YA -- the RM15,000 cap resets annually, it does not carry forward.'},
+    eligibilityPeriod:{type:'annual',description:'Assessed fresh each YA -- the cap resets annually, it does not carry forward.'},
+    rateHistory:[
+      {fromYA:2018,toYA:2019,value:'Separate caps: secretarial fee up to RM5,000/YA, tax filing fee up to RM10,000/YA (P.U.(A) 336/2014).'},
+      {fromYA:2020,toYA:null,value:'Combined cap RM15,000/YA for secretarial + tax filing fee together (P.U.(A) 162/2020, revoking 336/2014). From YA2022, the "and paid" timing condition was removed (P.U.(A) 471/2021) -- incurred basis applies.'},
+    ],
+    verifyCurrentRate:true,
+    requiresApproval:false,
+  },
+  {
+    id:'ca_plant_machinery_general',
+    name:'Capital Allowance -- Plant & Machinery (General)',
+    category:'capital_allowance',
+    citation:'Schedule 3, Para 10 & 15, Income Tax Act 1967',
+    detectKeywords:/\b(plant|machinery|equipment)\b/i,
+    excludeKeywords:/\b(motor vehicle|car|computer|office equipment|furniture)\b/i,
+    treatment:'Initial Allowance 20% + Annual Allowance 14% -- stable across YA2018-YA2026. Confirm the specific asset is genuinely "plant" (used in the business, not a building/structure) per case law before applying general rates.',
+    presentationNote:'Standard CA schedule presentation: QE, IA, AA, residual expenditure carried forward.',
+    queryQuestions:['Is this asset used directly in the business operations (qualifying as "plant"), or is it a building/structure component (which may not qualify, or qualifies under a different Schedule 3 category)?'],
+    supportingDocs:['Purchase invoice/contract','Asset register entry'],
+    eligibilityPeriod:{type:'per-asset',description:'Claimed annually until fully written off.'},
+    verifyCurrentRate:false,
+    requiresApproval:false,
+  },
+  {
+    id:'ca_computer_ict',
+    name:'Capital Allowance -- Computer / ICT Equipment',
+    category:'capital_allowance',
+    citation:'Schedule 3, ITA 1967 (standard rate); P.U.(A) 268/2021 (COVID-era ACA)',
+    detectKeywords:/\b(computer|laptop|server|ict equipment|software)\b/i,
+    treatment:'Standard rate: Initial Allowance 20% + Annual Allowance 20%. A temporary Accelerated Capital Allowance (20% IA + 40% AA, full write-off over 3 years) applied to qualifying expenditure incurred 1 March 2020 to 31 December 2021 under P.U.(A) 268/2021 -- confirm the exact purchase date before applying the accelerated rate.',
+    presentationNote:'If claiming the COVID-era ACA rate, cite P.U.(A) 268/2021 explicitly and confirm the purchase date falls within the qualifying window.',
+    queryQuestions:['What is the exact purchase/invoice date -- does it fall within the 1 Mar 2020 to 31 Dec 2021 ACA window?'],
+    supportingDocs:['Purchase invoice showing the exact date'],
+    eligibilityPeriod:{type:'time-limited',description:'Standard rate has no time limit. The accelerated (20%/40%) rate only applies to expenditure incurred 1 March 2020 - 31 December 2021.'},
+    verifyCurrentRate:true,
+    requiresApproval:false,
+  },
+  {
+    id:'ca_office_furniture',
+    name:'Capital Allowance -- Office Equipment, Furniture & Fittings',
+    category:'capital_allowance',
+    citation:'Schedule 3, ITA 1967',
+    detectKeywords:/\b(office equipment|furniture|fittings)\b/i,
+    treatment:'Initial Allowance 20% + Annual Allowance 10% -- stable across YA2018-YA2026.',
+    presentationNote:'Standard CA schedule presentation.',
+    queryQuestions:['Does the cost per item fall under the small value asset threshold (RM2,000 from YA2020), which may qualify for 100% write-off instead?'],
+    supportingDocs:['Purchase invoice/contract'],
+    eligibilityPeriod:{type:'per-asset',description:'Claimed annually until fully written off.'},
+    verifyCurrentRate:false,
+    requiresApproval:false,
+  },
+  {
+    id:'interest_restriction_332',
+    name:'Interest Expense Restriction (Non-Business Use of Borrowed Funds)',
+    category:'restriction',
+    citation:'Section 33(2), ITA 1967; Public Ruling 2/2011',
+    detectKeywords:/\b(interest expense|loan interest|overdraft interest|term loan interest|bank interest)\b/i,
+    treatment:'Where borrowed funds are used for non-business purposes (investments, loans to others, fixed deposits), a proportion of interest is disallowed per the formula in PR 2/2011. NOT restricted where total interest charged for the year does not exceed RM10,000 (companies) / RM6,000 (individuals and others). A stricter monthly-balance method applies where the cost of investments/loans funded by borrowings exceeds RM500,000. Disallowed interest can be offset against related investment income.',
+    presentationNote:'Show the computation working (borrowings vs non-business use) explicitly, not just the final restricted amount -- this is judgment-heavy and the preparer needs to see the basis.',
+    queryQuestions:['Have any borrowed funds been used for non-business purposes (investments, inter-company loans, deposits)?','Does total interest for the year exceed the RM10,000 (company) / RM6,000 (other) de minimis threshold?','Does the cost of investments/loans funded by borrowings exceed RM500,000 (triggering the stricter monthly-balance method)?'],
+    supportingDocs:['Loan/borrowing statements','Details of any investments or advances funded by borrowed funds','Interest computation working'],
+    eligibilityPeriod:{type:'annual',description:'Assessed fresh each YA based on that year\u2019s borrowings and non-business use.'},
+    verifyCurrentRate:false,
+    requiresApproval:false,
+  },
+  {
+    id:'donation_deduction',
+    name:'Donation / Gift Deduction',
+    category:'deduction',
+    citation:'Section 44(6), ITA 1967; Public Ruling 5/2021 (individuals)',
+    detectKeywords:/\b(donation|gift to|contribution to)\b/i,
+    treatment:'Deducted from AGGREGATE INCOME (not a business expense deduction). Gifts of money to Federal/State Government or a local authority: no cap. Gifts to DGIR-approved institutions/organisations/funds: capped at 10% of aggregate income for companies. For individuals, this cap rose from 7% to 10% of aggregate income effective YA2020.',
+    presentationNote:'Show as a deduction from aggregate income (after statutory income aggregation), not as a P&L add-back -- this is a different stage of the tax computation from ordinary expense disallowance.',
+    queryQuestions:['Is the recipient institution/organisation DGIR-approved (has a valid approval reference)? -- request the approval letter or check the recipient\u2019s approved status.','Does the total donation for approved institutions exceed 10% of aggregate income (the cap will restrict the deduction)?'],
+    supportingDocs:['Official receipt (Kew-38 for government donations, or the approved institution\u2019s receipt)','DGIR approval reference for the receiving institution'],
+    eligibilityPeriod:{type:'annual',description:'Assessed fresh each YA -- the 10% cap is against that year\u2019s aggregate income.'},
+    rateHistory:[
+      {fromYA:2018,toYA:2019,value:'Individual cap: 7% of aggregate income for approved-institution donations.'},
+      {fromYA:2020,toYA:null,value:'Individual cap raised to 10% of aggregate income (PR 5/2021). Company cap remained 10% throughout.'},
+    ],
+    verifyCurrentRate:true,
+    requiresApproval:false,
+  },
+  {
+    id:'rd_double_deduction',
+    name:'Research & Development Double Deduction',
+    category:'deduction',
+    citation:'Sections 34A & 34B, ITA 1967; Public Rulings 5/2020, 6/2020, 10/2021',
+    detectKeywords:/\b(research and development|r&d expenditure|research expenditure)\b/i,
+    treatment:'Double deduction for approved in-house R&D expenditure (S.34A) or payments to an approved research institute/R&D company (S.34B). From 1 January 2021, overseas R&D expenditure must not exceed 30% of the total qualifying R&D expenditure to remain eligible. DGIR/MOF approval generally required.',
+    presentationNote:'Show as Appendix D1 (code 301 for S.34A, 302 for S.34B) -- a further/double deduction, not an ordinary business expense.',
+    queryQuestions:['Has the R&D activity/expenditure been approved by the relevant authority (MOF/MOSTI or DGIR, depending on the route)?','What proportion of the R&D expenditure was incurred overseas -- does it exceed 30% of the total (which would affect eligibility from YA2021 onward)?'],
+    supportingDocs:['R&D approval letter','Breakdown of R&D expenditure (local vs overseas)','Supporting invoices/contracts for the R&D activity'],
+    eligibilityPeriod:{type:'annual',description:'Claimed annually on qualifying expenditure incurred that year; ongoing approval status should be reconfirmed periodically.'},
+    verifyCurrentRate:true,
+    requiresApproval:true,
+  },
+  {
+    id:'training_double_deduction',
+    name:'Approved Training Double Deduction',
+    category:'deduction',
+    citation:'P.U.(A) 61/1992 (as amended by P.U.(A) 212/1992 and 111/1995)',
+    detectKeywords:/\b(training expense|approved training)\b/i,
+    treatment:'Double deduction for pre-commencement (manufacturing) training expenditure, and for training of disabled persons who are not employees of the company.',
+    presentationNote:'Show as a further/double deduction line, separate from ordinary staff training expense (which is already 100% deductible under S.33(1) without needing this special provision).',
+    queryQuestions:['Does the training fall within the specific qualifying categories (pre-commencement manufacturing training, or training of disabled non-employees) rather than ordinary staff training?'],
+    supportingDocs:['Training invoice/contract','Evidence the training falls within the qualifying category'],
+    eligibilityPeriod:{type:'annual',description:'Claimed on qualifying expenditure incurred that year.'},
+    verifyCurrentRate:true,
+    requiresApproval:false,
+  },
+  {
+    id:'export_promotion_double_deduction',
+    name:'Export Promotion Double Deduction',
+    category:'deduction',
+    citation:'Section 41, Promotion of Investments Act 1986, and related P.U.(A) Orders',
+    detectKeywords:/\b(export promotion|export expense|overseas trade)\b/i,
+    treatment:'Double deduction for specified export promotion expenditure (overseas advertising, market research, participation in trade fairs, maintaining an overseas sales office, etc.) -- exact qualifying categories are set out in the governing P.U.(A) Orders.',
+    presentationNote:'Show as a further/double deduction line (Form C further-deduction section), separate from ordinary marketing/travel expense.',
+    queryQuestions:['Does the expenditure fall within one of the specific qualifying export-promotion categories listed in the governing P.U.(A) Order?'],
+    supportingDocs:['Invoices/contracts for the export promotion activity','Evidence of the export/overseas market connection'],
+    eligibilityPeriod:{type:'annual',description:'Claimed on qualifying expenditure incurred that year.'},
     verifyCurrentRate:true,
     requiresApproval:false,
   },
@@ -4192,6 +4317,24 @@ function buildTC(){
   if(!c||!y){
     const tc=document.getElementById('fullTC');
     if(tc) tc.innerHTML=`<div style="padding:40px;text-align:center;color:var(--t3)"><div style="font-size:32px;margin-bottom:12px">ðŸ“‹</div><div style="font-size:14px;font-weight:600;margin-bottom:6px">No client selected</div><div style="font-size:12px">Select a client to view their tax computation</div></div>`;
+    return;
+  }
+  const formCode=typeof taxReturnFormCode==='function'?taxReturnFormCode(c.form||'C'):(c.form||'C');
+  // This engine applies company/LLP tiered tax bands (15%/17%/24% etc.).
+  // A sole proprietor (Form B/BE) is taxed at INDIVIDUAL progressive rates
+  // -- a fundamentally different rate structure, reliefs, and computation
+  // basis -- and a partnership (Form P) has no entity-level tax at all
+  // (income flows through to each partner's own return). Applying the
+  // company engine to either would produce a genuinely wrong figure, so
+  // this stops here rather than silently computing the wrong answer.
+  if(formCode&&formCode!=='C'){
+    const tc=document.getElementById('fullTC');
+    const formNames={P:'Form P (Partnership)',B:'Form B (Resident individual with business)',BE:'Form BE (Resident individual without business)',M:'Form M (Non-resident individual)'};
+    if(tc) tc.innerHTML=`<div style="padding:40px;text-align:center;color:var(--t3)">
+      <div style="font-size:32px;margin-bottom:12px">\u26a0\ufe0f</div>
+      <div style="font-size:14px;font-weight:600;margin-bottom:6px;color:var(--amber3)">${tfEsc(formNames[formCode]||('Form '+formCode))} is not yet supported by this tax computation engine</div>
+      <div style="font-size:12px;max-width:480px;margin:0 auto">This engine applies company/LLP tiered rates (15%/17%/24%). ${formCode==='P'?'A partnership has no entity-level tax -- income is allocated to each partner\u2019s own individual return.':'Individual taxpayers are taxed at progressive individual rates with personal reliefs, a different system entirely from company rates.'} Building this correctly is a separate piece of work -- do not use this screen\u2019s figures for a ${tfEsc(formNames[formCode]||formCode)} client.</div>
+    </div>`;
     return;
   }
   const rows=window._fsRows||[];
@@ -17556,6 +17699,9 @@ function openRulingDetail(ruleId,code){
     <div style="margin-bottom:14px"><div style="font-size:11px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px">Presentation format</div><div style="font-size:13px;line-height:1.5">${tfEsc(rule.presentationNote)}</div></div>
     <div style="margin-bottom:14px"><div style="font-size:11px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px">Questions to ask the client</div><ul style="margin:0;padding-left:18px;font-size:13px;line-height:1.6">${rule.queryQuestions.map(q=>`<li>${tfEsc(q)}</li>`).join('')}</ul></div>
     <div style="margin-bottom:14px"><div style="font-size:11px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px">Supporting documents needed</div><ul style="margin:0;padding-left:18px;font-size:13px;line-height:1.6">${rule.supportingDocs.map(d=>`<li>${tfEsc(d)}</li>`).join('')}</ul></div>
+    ${rule.rateHistory?.length?`<div style="margin-bottom:14px"><div style="font-size:11px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px">Rate/cap history by year</div>
+      <table style="width:100%;border-collapse:collapse;font-size:12px"><tbody>${rule.rateHistory.map(h=>`<tr><td style="padding:5px 8px;border-bottom:1px solid var(--line);white-space:nowrap;font-weight:700;vertical-align:top">YA ${h.fromYA}${h.toYA?'\u2013'+h.toYA:'+'}</td><td style="padding:5px 8px;border-bottom:1px solid var(--line)">${tfEsc(h.value)}</td></tr>`).join('')}</tbody></table>
+    </div>`:''}
     <div style="padding:10px 12px;background:var(--bg2);border:1px solid var(--line);border-radius:7px">
       <div style="font-size:11px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:.4px;margin-bottom:4px">Eligibility period</div>
       <div style="font-size:13px">${rule.eligibilityPeriod.years?`Up to <b>${rule.eligibilityPeriod.years} years</b>. `:''}${tfEsc(rule.eligibilityPeriod.description)}</div>
