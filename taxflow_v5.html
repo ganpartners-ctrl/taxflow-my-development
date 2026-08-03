@@ -17250,7 +17250,12 @@ function caEvalCell(v,row){
   if(!/^[\d\s+\-*/().]+$/.test(expr)) return 0;
   try{return Number(Function('"use strict";return ('+expr+')')())||0;}catch(e){return 0;}
 }
-function caDefaultWorkCols(){return ['Category','Particular','Year','IA Rate %','Original Cost','QE B/F','QE Additions','QE Disposal / Written Off','QE C/F','AA Rate %','RE B/F','RE Additions','RE Disposal / Written Off','Initial','Annual','Allowable','RE C/F','CA Type'];}
+function caDefaultWorkCols(){return ['Category','Particular','Business','Year','IA Rate %','Original Cost','QE B/F','QE Additions','QE Disposal / Written Off','QE C/F','AA Rate %','RE B/F','RE Additions','RE Disposal / Written Off','Initial','Annual','Allowable','RE C/F','CA Type','Incentive Type'];}
+// Reuses the client's actual business source list (Business 1/2/3 or
+// their real named sources if set up) -- the same list already used
+// for ledger business allocation, so "Business" here means the same
+// thing it does everywhere else in the app.
+function caBusinessOptions(){return (typeof wpBusinessList==='function'?wpBusinessList():[{key:'biz1',label:'Business 1'},{key:'biz2',label:'Business 2'},{key:'biz3',label:'Business 3'}]).map(b=>b.label);}
 function caAllowanceTypeOptions(){return ['Non-ACA','ACA - Accelerated Capital Allowance','Review required'];}
 function caAcaIncentiveOptions(){return ['','ACA - automation equipment','ACA - ICT / computer equipment','ACA - low value asset','ACA - small value asset','ACA - plant and machinery special rate','ACA - approved incentive / pioneer / RA link','Other ACA - approval required'];}
 function caReviewStatusOptions(){return ['review_required','approved','not_applicable','missing_approval'];}
@@ -17282,11 +17287,17 @@ function caFormulaForRate(baseCell,rate){return `=${baseCell}*${(Number(rate)||0
 // Annual referencing C9 when C9 is itself "=C6+C7-C8") silently reads 0
 // for that reference. Every formula below is therefore fully expanded
 // to reference only literal (non-formula) cells.
-function caFormulaQECF(){return '=C6+C7-C8';}
-function caFormulaInitial(){return '=C7*C4/100';}
-function caFormulaAnnual(){return '=(C6+C7-C8)*C10/100';}
-function caFormulaAllowable(){return '=C7*C4/100+(C6+C7-C8)*C10/100';}
-function caFormulaRECF(){return '=C11+C12-C13-(C7*C4/100+(C6+C7-C8)*C10/100)';}
+// New column positions (1-based) after inserting Business at C3:
+// C1 Category, C2 Particular, C3 Business, C4 Year, C5 IA Rate%,
+// C6 Original Cost, C7 QE B/F, C8 QE Additions, C9 QE Disposal,
+// C10 QE C/F, C11 AA Rate%, C12 RE B/F, C13 RE Additions,
+// C14 RE Disposal, C15 Initial, C16 Annual, C17 Allowable, C18 RE C/F,
+// C19 CA Type, C20 Incentive Type.
+function caFormulaQECF(){return '=C7+C8-C9';}
+function caFormulaInitial(){return '=C8*C5/100';}
+function caFormulaAnnual(){return '=(C7+C8-C9)*C11/100';}
+function caFormulaAllowable(){return '=C8*C5/100+(C7+C8-C9)*C11/100';}
+function caFormulaRECF(){return '=C12+C13-C14-(C8*C5/100+(C7+C8-C9)*C11/100)';}
 function caRateDisclosure(rule){return `${rule.label}: default IA ${rule.ia}%, AA ${rule.aa}% before ACA/Budget review. ${rule.source}`;}
 function caCanReplaceLedgerFormula(value){
   const raw=String(value??'').replace(/\s+/g,'');
@@ -17334,37 +17345,59 @@ function caWorkfileSetCell(rowIdx,colName,value,rerender=false){
 function caNormalizeWorkfile(){
   CA_WORKFILE=CA_WORKFILE||{rows:[],cols:caDefaultWorkCols(),attachments:[]};
   CA_WORKFILE.cols=CA_WORKFILE.cols?.length?CA_WORKFILE.cols:caDefaultWorkCols();
+  const target=caDefaultWorkCols();
   if(CA_WORKFILE.cols[0]!=='Category'){
     // Unrecognised legacy layout -- start fresh rather than guess.
-    const oldRows=CA_WORKFILE.rows||[];
-    CA_WORKFILE.cols=caDefaultWorkCols();
-    CA_WORKFILE.rows=oldRows.map(r=>['Opening',r[0]||'','',20,0,0,0,0,0,10,r[1]||0,r[2]||0,r[3]||0,r[4]||0,r[5]||0,r[6]||0,r[7]||0,'Non-ACA']);
+    CA_WORKFILE.cols=target;
+    CA_WORKFILE.rows=[];
   }else if(CA_WORKFILE.cols.includes('Opening RE B/F')&&!CA_WORKFILE.cols.includes('Original Cost')){
-    // Migrate the previous PDF-simplified layout (Category, Particulars,
+    // Migrate the old PDF-simplified layout (Category, Particulars,
     // Opening RE B/F, Current Year Additions, Disposals/W-O, IA, AA, RE C/F,
-    // Note, Source, CA Type, ACA/Incentive, Approval Ref, Review Status)
-    // into the new one, which mirrors the PDF's own Capital Allowance
-    // Schedule columns exactly (Particular/Year/IA%/Original Cost/QE B-F/
-    // Additions/Disposal/C-F/AA%/RE B-F/Additions/Disposal/Initial/Annual/
-    // Allowable/RE C-F) plus a single CA Type column.
+    // Note, Source, CA Type, ACA/Incentive, Approval Ref, Review Status).
     const oldRows=CA_WORKFILE.rows||[];
-    CA_WORKFILE.cols=caDefaultWorkCols();
+    CA_WORKFILE.cols=target;
+    const defaultBiz=(caBusinessOptions()[0])||'Business 1';
     CA_WORKFILE.rows=oldRows.map(r=>{
       const reBF=r[2]||0,reAdd=r[3]||0,reDisp=r[4]||0,ia=r[5],aa=r[6],reCF=r[7]||0,caType=r[10]||'Non-ACA';
-      return ['Opening'===r[0]?r[0]:(r[0]||'Opening'),r[1]||'','',20,(Number(reBF)||0)+(Number(reAdd)||0),reBF,reAdd,reDisp,caFormulaQECF(),10,reBF,reAdd,reDisp,ia||caFormulaInitial(),aa||caFormulaAnnual(),caFormulaAllowable(),reCF||caFormulaRECF(),caType];
+      return ['Opening'===r[0]?r[0]:(r[0]||'Opening'),r[1]||'',defaultBiz,'',20,(Number(reBF)||0)+(Number(reAdd)||0),reBF,reAdd,reDisp,caFormulaQECF(),10,reBF,reAdd,reDisp,ia||caFormulaInitial(),aa||caFormulaAnnual(),caFormulaAllowable(),reCF||caFormulaRECF(),caType,''];
     });
   }
-  const defaults=caDefaultWorkCols();
-  defaults.forEach(c=>{
-    if(!CA_WORKFILE.cols.includes(c)){
-      CA_WORKFILE.cols.push(c);
-      CA_WORKFILE.rows=(CA_WORKFILE.rows||[]).map(r=>[...(r||[]),c==='CA Type'?'Non-ACA':'']);
-    }
-  });
+  if(JSON.stringify(CA_WORKFILE.cols)!==JSON.stringify(target)){
+    // Any remaining mismatch (a column was added/removed/reordered since
+    // this workfile was last saved) -- remap by COLUMN NAME rather than
+    // position. This is what makes it safe to add a new column (like
+    // Business or Incentive Type) without writing new hardcoded-position
+    // migration code every time and risking silent misalignment.
+    const oldCols=CA_WORKFILE.cols;
+    const oldRows=CA_WORKFILE.rows||[];
+    const defaultFor=(name)=>{
+      if(name==='CA Type') return 'Non-ACA';
+      if(name==='Business') return (caBusinessOptions()[0])||'Business 1';
+      if(name==='IA Rate %') return 20;
+      if(name==='AA Rate %') return 10;
+      return '';
+    };
+    // These columns hold formulas that reference OTHER columns by
+    // position (=C7+C8-C9 etc) -- a formula string carried over verbatim
+    // from a layout where the columns were in different positions would
+    // silently compute the wrong thing. Regenerate them fresh instead of
+    // preserving the old string.
+    const formulaCol={'QE C/F':caFormulaQECF,'Initial':caFormulaInitial,'Annual':caFormulaAnnual,'Allowable':caFormulaAllowable,'RE C/F':caFormulaRECF};
+    CA_WORKFILE.rows=oldRows.map(r=>target.map(name=>{
+      if(formulaCol[name]&&typeof (oldCols.indexOf(name)>=0?r[oldCols.indexOf(name)]:'')==='string'&&String(r[oldCols.indexOf(name)]||'').trim().startsWith('=')){
+        return formulaCol[name]();
+      }
+      const i=oldCols.indexOf(name);
+      const v=i>=0?r[i]:undefined;
+      return (v!=null&&v!=='')?v:defaultFor(name);
+    }));
+    CA_WORKFILE.cols=target;
+  }
   CA_WORKFILE.rows=(CA_WORKFILE.rows||[]).map(r=>{
     const row=[...(r||[])];
     while(row.length<CA_WORKFILE.cols.length) row.push('');
     if(!caWorkVal(row,'CA Type')) caWorkSet(row,'CA Type','Non-ACA');
+    if(!caWorkVal(row,'Business')) caWorkSet(row,'Business',(caBusinessOptions()[0])||'Business 1');
     return row;
   });
 }
@@ -17479,11 +17512,12 @@ function caBuildWorkRowFromAsset(a){
   // =C9*C10/100 formula has no way to express that cap -- it would let
   // R.E. C/F go negative for an asset that's already fully written down).
   const calc=caCalculateAssetAllowances({qeBF,qeAdd:0,qeDisp:0,reBF,reDisp:0,iaRateOverride:iaRate/100,aaRateOverride:aaRate/100});
-  return [a.catName||'Opening',a.desc||'Asset','',iaRate,cost,
+  const defaultBiz=(caBusinessOptions()[0])||'Business 1';
+  return [a.catName||'Opening',a.desc||'Asset',defaultBiz,'',iaRate,cost,
     qeBF,0,0,caFormulaQECF(),
     aaRate,reBF,0,0,
     calc.ia,calc.aa,calc.ia+calc.aa,calc.reCF,
-    'Non-ACA'];
+    'Non-ACA',''];
 }
 // Builds one Work File row from a current-year fixed-asset ledger
 // addition -- Original Cost / QE Additions / RE Additions all start at
@@ -17493,11 +17527,12 @@ function caBuildWorkRowFromLedger(r,particular){
   const rule=caRateRuleForLedgerRow(r);
   const iaRate=rule?rule.ia:20,aaRate=rule?rule.aa:10;
   const calc=caCalculateAssetAllowances({qeBF:0,qeAdd:amount,qeDisp:0,reBF:0,reDisp:0,iaRateOverride:iaRate/100,aaRateOverride:aaRate/100});
-  return [caGuessWorkCategory(r),particular,new Date().getFullYear(),iaRate,amount,
+  const defaultBiz=(caBusinessOptions()[0])||'Business 1';
+  return [caGuessWorkCategory(r),particular,defaultBiz,new Date().getFullYear(),iaRate,amount,
     0,amount,0,caFormulaQECF(),
     aaRate,0,amount,0,
     calc.ia,calc.aa,calc.ia+calc.aa,calc.reCF,
-    'Non-ACA'];
+    'Non-ACA',''];
 }
 function caAppendLedgerRows(force=false){
   caNormalizeWorkfile();
@@ -17643,21 +17678,22 @@ function renderCAThisYear(){
   const groupCost=(rs)=>rs.reduce((s,r)=>s+caWorkRowTotalCost(r),0);
   el.innerHTML=`${caPdfStyleHeader('THIS YEAR FA / HP / CA')}<div class="card" style="padding:12px;margin-bottom:12px;display:flex;gap:8px;align-items:center"><div><div style="font-weight:800;color:var(--blue3)">This Year FA / HP / CA</div><div style="font-size:12px;color:var(--t3)">Opening amounts roll from last-year QE/R.E. C/F. Current-year fixed asset ledger additions are pushed into this schedule.</div></div><button class="btn btn-ghost btn-sm" style="margin-left:auto" onclick="caAddLedgerToWorkfile();renderCAThisYear()">Pull FA Ledger Items</button><button class="btn btn-primary btn-sm" onclick="switchFATab('workfile',document.querySelector('[data-fa-tab=workfile]'))">Open Work File</button></div>
   <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:10px;margin-bottom:12px">${[['Total Cost',totalCost()],['R.E. B/F',total('RE B/F')],['R.E. Additions',total('RE Additions')],['Disposal / W/O',total('RE Disposal / Written Off')],['Initial + Annual',total('Initial')+total('Annual')],['R.E. C/F',total('RE C/F')]].map(([l,v])=>`<div class="card" style="padding:12px;text-align:center"><div style="font-size:10px;font-weight:800;color:var(--t3);text-transform:uppercase">${l}</div><div class="m" style="font-size:18px;font-weight:800;color:var(--blue3)">RM ${fsMoney(v)}</div></div>`).join('')}</div>
-  <div class="tw"><table class="t"><thead><tr><th>Particular</th><th>CA Type</th><th class="r">Total Cost</th><th class="r">R.E. B/F</th><th class="r">R.E. Additions</th><th class="r">Disposals / W/O</th><th class="r">Initial</th><th class="r">Annual</th><th class="r">R.E. C/F</th><th>Status</th></tr></thead><tbody>
+  <div class="tw"><table class="t"><thead><tr><th>Particular</th><th>Business</th><th>CA Type</th><th class="r">Total Cost</th><th class="r">R.E. B/F</th><th class="r">R.E. Additions</th><th class="r">Disposals / W/O</th><th class="r">Initial</th><th class="r">Annual</th><th class="r">R.E. C/F</th><th>Status</th></tr></thead><tbody>
   ${Object.entries(groups).map(([cat,rs])=>{
     const c=groupCost(rs), rec=caReconForCategory(cat,c,bsTotals);
-    return `<tr><td colspan="10" style="font-weight:800;color:var(--blue3);background:var(--blue-d)">${tfEsc(cat)}</td></tr>${rs.map(r=>{
+    return `<tr><td colspan="11" style="font-weight:800;color:var(--blue3);background:var(--blue-d)">${tfEsc(cat)}</td></tr>${rs.map(r=>{
       const ri=CA_WORKFILE.rows.indexOf(r);
       const type=caWorkType(r);
       const rule=caRateRuleForWorkRow(r);
       const subclass=rule
         ? `<div style="margin-top:4px;font-size:11px;color:var(--t3)">Sub-class: ${tfEsc(rule.label)} | IA ${rule.ia}% | AA ${rule.aa}%</div>`
         : `<div style="margin-top:4px;font-size:11px;color:var(--red)">Sub-class review required</div>`;
+      const incentiveRow=String(type).startsWith('ACA')?`<div style="margin-top:4px">${caSelectHtml(caWorkVal(r,'Incentive Type'),caAcaIncentiveOptions(),`caWorkfileSetCell(${ri},'Incentive Type',this.value)`,true)}</div>`:'';
       const categoryNote=r[0]?`<div style="margin-top:4px;font-size:11px;color:var(--t3)">${tfEsc(r[0])}</div>`:'';
-      return `<tr><td>${tfEsc(r[1]||'')}${categoryNote}</td><td>${caSelectHtml(type,caAllowanceTypeOptions(),`caWorkfileSetCell(${ri},'CA Type',this.value,true)`)}${subclass}</td><td class="r m">${fsLineAmount(caWorkRowTotalCost(r))}</td><td class="r m">${fsLineAmount(val(r,'RE B/F'))}</td><td class="r m">${fsLineAmount(val(r,'RE Additions'))}</td><td class="r m">${fsLineAmount(val(r,'RE Disposal / Written Off'))}</td><td class="r m">${fsLineAmount(val(r,'Initial'))}</td><td class="r m">${fsLineAmount(val(r,'Annual'))}</td><td class="r m">${fsLineAmount(val(r,'RE C/F'))}</td><td></td></tr>`;
-    }).join('')}<tr class="tot"><td>${tfEsc(cat)} total</td><td></td><td class="r m">${fsMoney(c)}</td><td class="r m">${fsMoney(groupTotal(rs,'RE B/F'))}</td><td class="r m">${fsMoney(groupTotal(rs,'RE Additions'))}</td><td class="r m">${fsMoney(groupTotal(rs,'RE Disposal / Written Off'))}</td><td class="r m">${fsMoney(groupTotal(rs,'Initial'))}</td><td class="r m">${fsMoney(groupTotal(rs,'Annual'))}</td><td class="r m">${fsMoney(groupTotal(rs,'RE C/F'))}</td><td><span class="badge ${rec.ok?'b-green':'b-amber'}">${rec.ok?'Reconciled':'Review'}</span> <span style="font-size:11px;color:var(--t3)">${tfEsc(rec.msg)} \u00b7 BS cost RM ${fsMoney(rec.bs)}</span></td></tr>`;
+      return `<tr><td>${tfEsc(r[1]||'')}${categoryNote}</td><td>${caSelectHtml(caWorkVal(r,'Business'),caBusinessOptions(),`caWorkfileSetCell(${ri},'Business',this.value)`)}</td><td>${caSelectHtml(type,caAllowanceTypeOptions(),`caWorkfileSetCell(${ri},'CA Type',this.value,true)`)}${subclass}${incentiveRow}</td><td class="r m">${fsLineAmount(caWorkRowTotalCost(r))}</td><td class="r m">${fsLineAmount(val(r,'RE B/F'))}</td><td class="r m">${fsLineAmount(val(r,'RE Additions'))}</td><td class="r m">${fsLineAmount(val(r,'RE Disposal / Written Off'))}</td><td class="r m">${fsLineAmount(val(r,'Initial'))}</td><td class="r m">${fsLineAmount(val(r,'Annual'))}</td><td class="r m">${fsLineAmount(val(r,'RE C/F'))}</td><td></td></tr>`;
+    }).join('')}<tr class="tot"><td>${tfEsc(cat)} total</td><td></td><td></td><td class="r m">${fsMoney(c)}</td><td class="r m">${fsMoney(groupTotal(rs,'RE B/F'))}</td><td class="r m">${fsMoney(groupTotal(rs,'RE Additions'))}</td><td class="r m">${fsMoney(groupTotal(rs,'RE Disposal / Written Off'))}</td><td class="r m">${fsMoney(groupTotal(rs,'Initial'))}</td><td class="r m">${fsMoney(groupTotal(rs,'Annual'))}</td><td class="r m">${fsMoney(groupTotal(rs,'RE C/F'))}</td><td><span class="badge ${rec.ok?'b-green':'b-amber'}">${rec.ok?'Reconciled':'Review'}</span> <span style="font-size:11px;color:var(--t3)">${tfEsc(rec.msg)} \u00b7 BS cost RM ${fsMoney(rec.bs)}</span></td></tr>`;
   }).join('')}
-  <tr class="tot"><td>Total</td><td></td><td class="r">${fsMoney(totalCost())}</td><td class="r">${fsMoney(total('RE B/F'))}</td><td class="r">${fsMoney(total('RE Additions'))}</td><td class="r">${fsMoney(total('RE Disposal / Written Off'))}</td><td class="r">${fsMoney(total('Initial'))}</td><td class="r">${fsMoney(total('Annual'))}</td><td class="r">${fsMoney(total('RE C/F'))}</td><td></td></tr>
+  <tr class="tot"><td>Total</td><td></td><td></td><td class="r">${fsMoney(totalCost())}</td><td class="r">${fsMoney(total('RE B/F'))}</td><td class="r">${fsMoney(total('RE Additions'))}</td><td class="r">${fsMoney(total('RE Disposal / Written Off'))}</td><td class="r">${fsMoney(total('Initial'))}</td><td class="r">${fsMoney(total('Annual'))}</td><td class="r">${fsMoney(total('RE C/F'))}</td><td></td></tr>
   </tbody></table></div>`;
 }
 function renderCAWorkfile(){
@@ -17666,10 +17702,15 @@ function renderCAWorkfile(){
   const numericCols=new Set(['Year','IA Rate %','Original Cost','QE B/F','QE Additions','QE Disposal / Written Off','QE C/F','AA Rate %','RE B/F','RE Additions','RE Disposal / Written Off','Initial','Annual','Allowable','RE C/F']);
   const workCell=(r,ri,c,ci)=>{
     if(c==='CA Type') return `<td data-cell data-fixed-cell="${tfEsc(c)}">${caSelectHtml(r[ci]||'Non-ACA',caAllowanceTypeOptions(),`caWorkfileSetCell(${ri},'CA Type',this.value,true)`)}</td>`;
+    if(c==='Business') return `<td data-cell data-fixed-cell="${tfEsc(c)}">${caSelectHtml(r[ci]||caBusinessOptions()[0],caBusinessOptions(),`caWorkfileSetCell(${ri},'Business',this.value)`)}</td>`;
+    if(c==='Incentive Type'){
+      const isAca=String(caWorkVal(r,'CA Type')||'').startsWith('ACA');
+      return `<td data-cell data-fixed-cell="${tfEsc(c)}">${isAca?caSelectHtml(r[ci]||'',caAcaIncentiveOptions(),`caWorkfileSetCell(${ri},'Incentive Type',this.value)`,true):'<span style="color:var(--t4);font-size:11px">\u2014 (Non-ACA)</span>'}</td>`;
+    }
     return `<td data-cell contenteditable oninput="caWorkfileCapture()" oncontextmenu="caWorkfileMenu(event,${ri},${ci})" class="${numericCols.has(c)?'r m':''}">${tfEsc(r[ci]??'')}</td>`;
   };
-  el.innerHTML=`<div class="card" style="padding:12px;margin-bottom:12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap"><div><div style="font-weight:800;color:var(--blue3)">FA / HP / CA Work File</div><div style="font-size:12px;color:var(--t3)">Editable working sheet, matching the tax computation's own Capital Allowance Schedule columns. Use formulas such as =C11+C12-C13-C16 or =C7*C4/100.</div></div><button class="btn btn-primary btn-sm" style="margin-left:auto" onclick="caWorkfileAddLine()">Add Line</button><button class="btn btn-ghost btn-sm" onclick="caWorkfileAddColumn()">Add Column</button><button class="btn btn-ghost btn-sm" onclick="caAddLedgerToWorkfile()">Add FA/HP/CA Ledger Items</button><button class="btn btn-ghost btn-sm" onclick="document.getElementById('ca-workfile-upload')?.click()">Upload Evidence</button></div>
-  <div class="card" style="padding:10px;margin-bottom:12px;background:var(--amber-d);color:var(--am3);font-size:12px"><b>CA Type:</b> choose Non-ACA unless the asset qualifies for Accelerated Capital Allowance.</div>
+  el.innerHTML=`<div class="card" style="padding:12px;margin-bottom:12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap"><div><div style="font-weight:800;color:var(--blue3)">FA / HP / CA Work File</div><div style="font-size:12px;color:var(--t3)">Editable working sheet, matching the tax computation's own Capital Allowance Schedule columns. Use formulas such as =C12+C13-C14-C17 or =C8*C5/100.</div></div><button class="btn btn-primary btn-sm" style="margin-left:auto" onclick="caWorkfileAddLine()">Add Line</button><button class="btn btn-ghost btn-sm" onclick="caWorkfileAddColumn()">Add Column</button><button class="btn btn-ghost btn-sm" onclick="caAddLedgerToWorkfile()">Add FA/HP/CA Ledger Items</button><button class="btn btn-ghost btn-sm" onclick="document.getElementById('ca-workfile-upload')?.click()">Upload Evidence</button></div>
+  <div class="card" style="padding:10px;margin-bottom:12px;background:var(--amber-d);color:var(--am3);font-size:12px"><b>CA Type:</b> choose Non-ACA unless the asset qualifies for Accelerated Capital Allowance. When ACA is chosen, pick the specific <b>Incentive Type</b> too. <b>Business:</b> assign each asset to the business source it belongs to -- capital allowance is computed per business source under Malaysian tax law.</div>
   <div class="tw"><table class="t" id="ca-workfile-table"><thead><tr>${CA_WORKFILE.cols.map((c,i)=>`<th data-col contenteditable oninput="caWorkfileCapture()" oncontextmenu="caWorkfileMenu(event,0,${i})">${tfEsc(c)}</th>`).join('')}</tr></thead><tbody>${CA_WORKFILE.rows.map((r,ri)=>`<tr data-row="${ri}">${CA_WORKFILE.cols.map((c,ci)=>workCell(r,ri,c,ci)).join('')}</tr>`).join('')}</tbody></table></div>
   <div class="card" style="padding:10px;margin-top:12px"><div style="font-weight:800;font-size:12px;margin-bottom:6px">Saved Evidence / Notes Files</div>${(CA_WORKFILE.attachments||[]).length?(CA_WORKFILE.attachments||[]).map(a=>`<span class="badge b-blue" style="margin-right:6px">${tfEsc(a.name)} (${Math.round((a.size||0)/1024)}KB)</span>`).join(''):'<span style="font-size:12px;color:var(--t3)">No files attached yet.</span>'}</div>`;
 }
