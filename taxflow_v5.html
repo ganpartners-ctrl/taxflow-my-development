@@ -1378,6 +1378,10 @@ const API_CONFIG = {
   OCR_BASE:  'http://127.0.0.1:5050',
   OCR_TOKEN: 'p2e_jNqrxRQrQRZ3wPjKKvrnSn3mDmCq-ERCg3oSUZwY1a4',
   get OCR_URL(){ return this.OCR_BASE + '/convert?delivery=file'; },  // delivery=file returns the converted file directly
+  // Separate server/port from OCR_BASE on purpose -- the existing OCR proxy
+  // already owns :5050 for the GL /convert route. ca_hp_server.py runs
+  // standalone on :5051 so it doesn't collide with that process.
+  CA_HP_BASE: 'http://127.0.0.1:5051',
 };
 const TF_GLYPH_FIXES=[
   ['ðŸ“Š','\u{1F4CA}'],['ðŸ“„','\u{1F4C4}'],['ðŸ“‹','\u{1F4CB}'],['ðŸ“‚','\u{1F4C2}'],['ðŸ”','\u{1F50D}'],['ðŸ”„','\u{1F504}'],
@@ -1456,6 +1460,7 @@ try {
     const s=JSON.parse(saved);
     if(s.OCR_BASE && !s.OCR_BASE.includes('45.64.170.8')) API_CONFIG.OCR_BASE=s.OCR_BASE;
     if(s.OCR_TOKEN) API_CONFIG.OCR_TOKEN=s.OCR_TOKEN;
+    if(s.CA_HP_BASE) API_CONFIG.CA_HP_BASE=s.CA_HP_BASE;
   }
   const savedOcrBase = String(API_CONFIG.OCR_BASE || '').trim();
   const appServerAsOcr = /^https?:\/\/(?:127\.0\.0\.1|localhost):5174(?:\/api)?(?:\/)?$/i.test(savedOcrBase)
@@ -1918,7 +1923,7 @@ function tbHasSubCategorySetup(classification){
 }
 let LG_RAW_HEADERS=[];
 let DEEMED_INTEREST_SCHEDULE=null;
-let CA_WORKFILE={rows:[],cols:['Category','Particulars','Opening RE B/F','Current Year Additions','Disposals / W/O','IA','AA','RE C/F','Note','Source','CA Type','ACA / Incentive','Approval Ref','Review Status'],attachments:[]};
+let CA_WORKFILE={rows:[],cols:['Category','Particular','Year','IA Rate %','Original Cost','QE B/F','QE Additions','QE Disposal / Written Off','QE C/F','AA Rate %','RE B/F','RE Additions','RE Disposal / Written Off','Initial','Annual','Allowable','RE C/F','CA Type'],attachments:[]};
 
 const f=(n,d=2)=>Math.abs(n).toLocaleString('en-MY',{minimumFractionDigits:d,maximumFractionDigits:d});
 const STATUS_COLOR = {
@@ -3489,7 +3494,7 @@ function taxExcelSheetSpecs(){
     'Directors Info':['name','isManagingDirector','address1','address2','address3','address4','idNo','dob','tin','phone','email','sharePct','salaryBonus','feesAllowance','loanToDirector','loanFromDirector','eaFile','reviewer','approvedStatus','notes'],
     'Beneficial Owner':['name','address1','address2','address3','address4','idNo','dob','country','tin','controlPct','salaryFees','loanBalance','controlNature','source','status','notes'],
     'Deemed Interest':['month','directorOrRelatedParty','amountLoanToFrom','alrPct','deemedInterestIncome','source','status','userConfirm','remarks'],
-    'FA HP CA':['category','particulars','openingReBF','currentYearAdditions','disposalsWO','ia','aa','reCF','note','source','caType','acaIncentive','approvalRef','reviewStatus'],
+    'FA HP CA':['category','particular','year','iaRate','originalCost','qeBF','qeAdditions','qeDisposal','qeCF','aaRate','reBF','reAdditions','reDisposal','initial','annual','allowable','reCF','caType'],
     'Analysis of Accounts':['accountCode','accountName','date','ref','paidToType','paidTo','paidToId','paidFor','periodCovered','ledgerAmount','business1Amount','business2Amount','business3Amount','allocatedTotal','difference','taxActComment','userComment','queryFlag','source','status'],
     'Client Queries':['id','target','account','amount','question','choices','clientAnswer','status','mailRef','linkedModule','notes'],
     'Tax Instalment':['type','ya','instalmentNo','estimate','dueDate','sentDate','receivedDate','status','mailId','notes'],
@@ -3532,7 +3537,7 @@ function taxDownloadExcelTemplate(){
     'Directors Info':k.directors||[],
     'Beneficial Owner':k.beneficialOwners||[],
     'Deemed Interest':di?.rows||[],
-    'FA HP CA':(CA_WORKFILE?.rows||[]).map(r=>({category:r[0],particulars:r[1],openingReBF:r[2],currentYearAdditions:r[3],disposalsWO:r[4],ia:r[5],aa:r[6],reCF:r[7],note:r[8],source:r[9],caType:r[10]||'Non-ACA',acaIncentive:r[11]||'',approvalRef:r[12]||'',reviewStatus:r[13]||'review_required'})),
+    'FA HP CA':(CA_WORKFILE?.rows||[]).map(r=>({category:r[0],particular:r[1],year:r[2],iaRate:r[3],originalCost:r[4],qeBF:r[5],qeAdditions:r[6],qeDisposal:r[7],qeCF:r[8],aaRate:r[9],reBF:r[10],reAdditions:r[11],reDisposal:r[12],initial:r[13],annual:r[14],allowable:r[15],reCF:r[16],caType:r[17]||'Non-ACA'})),
     'Analysis of Accounts':wpRows,
     'Client Queries':(CLIENT_QUERY_ITEMS||[]).map(q=>({id:q.id,target:q.target,account:q.acct,amount:q.amt,question:q.q,choices:(q.choices||[]).join(' | '),clientAnswer:q.clientAns,status:q.status,mailRef:q.mailId,linkedModule:q.wpId,notes:q.notes})),
     'Tax Instalment':k.taxEstimateRecords||[],
@@ -3636,7 +3641,7 @@ async function taxUploadExcelTemplate(input){
     if(typeof caEnsureWorkfile==='function') caEnsureWorkfile();
     CA_WORKFILE=CA_WORKFILE||{rows:[],cols:caDefaultWorkCols(),attachments:[]};
     CA_WORKFILE.cols=caDefaultWorkCols();
-    CA_WORKFILE.rows=rows.map(r=>[r.category,r.particulars,r.openingReBF,r.currentYearAdditions,r.disposalsWO,r.ia,r.aa,r.reCF,r.note,r.source,r.caType||'Non-ACA',r.acaIncentive||'',r.approvalRef||'',r.reviewStatus||'review_required']);
+    CA_WORKFILE.rows=rows.map(r=>[r.category,r.particular,r.year,r.iaRate,r.originalCost,r.qeBF,r.qeAdditions,r.qeDisposal,r.qeCF,r.aaRate,r.reBF,r.reAdditions,r.reDisposal,r.initial,r.annual,r.allowable,r.reCF,r.caType||'Non-ACA']);
     db.records.fa_hp_ca=rows;
   });
   applyArray('Analysis of Accounts',rows=>{
@@ -5343,6 +5348,16 @@ function renderHPScheduleFull(){
         <input class="fi" style="font-size:14px;font-weight:700;width:320px" value="${tfEsc(a.description)}" onchange="hpUpdateAssetField('${a.id}','description',this.value)">
         <button class="btn btn-ghost btn-sm" style="color:var(--red3)" onclick="hpDeleteAsset('${a.id}')">Delete Asset</button>
       </div>
+      ${(()=>{
+        const sumP=(a.yearlyPayments||[]).reduce((s,p)=>s+(Number(p.principal)||0),0);
+        const sumI=(a.yearlyPayments||[]).reduce((s,p)=>s+(Number(p.interest)||0),0);
+        const okP=Math.abs(sumP-ncNum(a.principalAmount))<1, okI=Math.abs(sumI-ncNum(a.interestAmount))<1;
+        if(!a.principalAmount&&!a.interestAmount) return '';
+        if(okP&&okI) return `<div style="margin-bottom:10px;padding:6px 10px;background:rgba(0,184,122,.08);border:1px solid rgba(0,184,122,.3);border-radius:6px;font-size:10.5px;color:var(--green3)">\u2713 Payment years reconcile exactly to stated Principal/Interest.</div>`;
+        return `<div style="margin-bottom:10px;padding:6px 10px;background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.35);border-radius:6px;font-size:10.5px;color:var(--red3)">
+          \u26a0 Payment years do not yet total the stated Principal/Interest (loan not fully repaid as at this YA is expected here \u2014 confirm, don't assume error): Principal ${okP?'':'<b>'}RM ${f(sumP)}${okP?'':'</b>'} of RM ${f(a.principalAmount)} &nbsp;\u00b7&nbsp; Interest ${okI?'':'<b>'}RM ${f(sumI)}${okI?'':'</b>'} of RM ${f(a.interestAmount)}
+        </div>`;
+      })()}
       <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:10px;margin-bottom:12px">
         ${[['originalCost','Original Cost (RM)'],['dateOfPurchase','Date of Purchase'],['depositAmount','Deposit Amount (RM)'],['totalInstalments','Total Instalments (No.)'],
            ['interestAmount','Interest Amount (RM)'],['monthlyInstalment','Monthly Instalment (RM)'],['finalInstalment','Final Instalment (RM)'],['principalAmount','Principal Amount (RM)']]
@@ -5978,6 +5993,13 @@ function renderAdminPanel(){
         <button class="btn btn-primary btn-sm" onclick="adminSaveOcrSettings()">Save Connection</button>
         <button class="btn btn-ghost btn-sm" onclick="testAPIConnection()">Test Connection</button>
         <div id="admin-ocr-test-result" style="margin-top:6px;font-size:11px"></div>
+        <div style="font-size:11px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:.4px;margin:14px 0 6px">CA / HP Schedule Extraction</div>
+        <div style="font-size:10.5px;color:var(--t3);margin-bottom:6px">Runs on its own port (ca_hp_server.py) -- separate from the OCR server above so it doesn't collide with the GL /convert route.</div>
+        <label class="fl" style="font-size:11px">API Base URL</label>
+        <input class="fi" id="admin-cahp-base" value="${tfEsc(API_CONFIG.CA_HP_BASE)}" style="font-family:'IBM Plex Mono',monospace;font-size:12px;margin-bottom:8px">
+        <button class="btn btn-primary btn-sm" onclick="adminSaveCaHpSettings()">Save Connection</button>
+        <button class="btn btn-ghost btn-sm" onclick="testCaHpConnection()">Test Connection</button>
+        <div id="admin-cahp-test-result" style="margin-top:6px;font-size:11px"></div>
       </div>
       <div class="col">
         <div style="font-size:11px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:.4px;margin-bottom:6px">Classification Setup</div>
@@ -6007,11 +6029,34 @@ function adminSaveOcrSettings(){
   if(!base||!token){showNotif('error','Missing info','Both URL and Token are required');return;}
   API_CONFIG.OCR_BASE=base;
   API_CONFIG.OCR_TOKEN=token;
-  try{ localStorage.setItem('taxflow_api_config',JSON.stringify({OCR_BASE:base,OCR_TOKEN:token})); }catch(e){}
+  try{ localStorage.setItem('taxflow_api_config',JSON.stringify({OCR_BASE:base,OCR_TOKEN:token,CA_HP_BASE:API_CONFIG.CA_HP_BASE})); }catch(e){}
   const disp=document.getElementById('lg-token-display');
   if(disp) disp.textContent='Authorization: Bearer '+token.substring(0,8)+'...'+token.slice(-6);
   showNotif('success','Saved','OCR connection settings updated');
   addAudit('User','Settings','OCR API settings updated from Admin panel');
+}
+function adminSaveCaHpSettings(){
+  const base=document.getElementById('admin-cahp-base')?.value.trim().replace(/\/$/,'');
+  if(!base){showNotif('error','Missing info','CA/HP schedule server URL is required');return;}
+  API_CONFIG.CA_HP_BASE=base;
+  try{ localStorage.setItem('taxflow_api_config',JSON.stringify({OCR_BASE:API_CONFIG.OCR_BASE,OCR_TOKEN:API_CONFIG.OCR_TOKEN,CA_HP_BASE:base})); }catch(e){}
+  showNotif('success','Saved','CA/HP schedule server settings updated');
+  addAudit('User','Settings','CA/HP schedule server settings updated from Admin panel');
+}
+async function testCaHpConnection(){
+  const base=(document.getElementById('admin-cahp-base')?.value||API_CONFIG.CA_HP_BASE||'').trim().replace(/\/$/,'');
+  const res=document.getElementById('admin-cahp-test-result');
+  if(!res) return;
+  res.innerHTML='<span style="color:var(--t3)">Testing connection...</span>';
+  try{
+    const ctrl=new AbortController();
+    const timer=setTimeout(()=>ctrl.abort(),8000);
+    const r=await fetch(base+'/health',{method:'GET',signal:ctrl.signal});
+    clearTimeout(timer);
+    res.innerHTML=r.ok?`<span style="color:var(--green3)">\u2713 Connected \u2014 HTTP ${r.status}. CA/HP extraction server is reachable.</span>`:`<span style="color:var(--red3)">HTTP ${r.status} \u2014 server responded but not healthy.</span>`;
+  }catch(e){
+    res.innerHTML=e.name==='AbortError'?'<span style="color:var(--amber3)">Timeout \u2014 server not responding within 8s.</span>':`<span style="color:var(--red3)">Cannot reach ${tfEsc(base)}: ${tfEsc(e.message)}</span>`;
+  }
 }
 
 function masterAdminSet(i,key,val){wpAdminDefaults();if(!window.TF_MASTER_ADMIN.admins[i])return;window.TF_MASTER_ADMIN.admins[i][key]=val;tfSaveState();}
@@ -8100,7 +8145,7 @@ function renderPriorYr(){
     <div class="card al" style="min-height:250px">
       <div class="card-title">${title}</div>
       <label class="uz" style="margin-top:10px;min-height:150px;position:relative">
-        <input type="file" accept="${accept}" style="position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer;z-index:2" onchange="priorHandleUpload('${type}',this)">
+        <input type="file" id="prior-${type}-file-input" accept="${accept}" style="position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer;z-index:2" onchange="priorHandleUpload('${type}',this)">
         <div class="uz-ic">${type==='formc'?'C':'TC'}</div>
         <div class="uz-t">${title}</div>
         <div class="uz-s">${sub}</div>
@@ -8126,6 +8171,17 @@ function renderPriorYr(){
         <div class="stat sa"><div class="stat-label">Shareholders</div><div class="stat-value" style="font-size:22px">${sourceShs.length||0}</div><div class="stat-sub">${tfEsc(peopleStatus.shareholderLabel||'Missing source schedule')}</div></div>
         <div class="stat sb"><div class="stat-label">FA / HP / CA</div><div class="stat-value" style="font-size:22px">${caRows.length||0} / ${hpRows.length||0}</div><div class="stat-sub">${tfEsc(faHpCaStatus)}</div></div>
       </div>
+      ${(typeof ncCaHpStatusBanner==='function')?ncCaHpStatusBanner():''}
+      ${(()=>{
+        const flags=(tc.reviewFlags||[]);
+        const looksStale=flags.some(f=>/appears incomplete or in an unrecognised layout|does not agree to tax computation total/i.test(f));
+        if(!looksStale) return '';
+        return `<div style="margin-top:10px;padding:14px 16px;background:rgba(239,68,68,.08);border:2px solid rgba(239,68,68,.4);border-radius:8px">
+          <div style="font-size:13px;font-weight:800;color:var(--red3);margin-bottom:4px">\u26a0 This CA data is wrong -- it did not come from an accurate read of the PDF</div>
+          <div style="font-size:12px;color:var(--t2);margin-bottom:10px">The numbers above don't match what's actually in the source document. This is fixable in one click: it clears any old cached data for this client and re-opens the file picker so you can upload the tax computation fresh.</div>
+          <button class="btn btn-primary btn-sm" onclick="priorFixCAData()" style="background:var(--red3);border-color:var(--red3)">Fix This Now</button>
+        </div>`;
+      })()}
       ${missingPeopleMsg}
       ${existingPeopleMsg}
       ${faHpCaMsg}
@@ -8151,6 +8207,36 @@ function priorResetExtracted(type){
   if(ncUploaded) ncUploaded[type]=false;
   if(ncExtracted&&Object.prototype.hasOwnProperty.call(ncExtracted,type)) delete ncExtracted[type];
 }
+// Single-click recovery for when this screen's CA data is visibly wrong
+// (matches the old-fallback-extraction pattern). Clears any stale
+// locally-cached FA/HP/CA records for this client, resets in-memory
+// state, and re-opens the tax computation file picker so the next
+// upload goes through clean, with no other buttons to hunt for.
+async function priorFixCAData(){
+  try{
+    const tin=tfCleanTin(currentClient?.tin||ncExtracted?.taxcomp?.tinNo||ncExtracted?.formc?.tinNo);
+    if(tin){
+      let deleted=0;
+      for(const store of ['caAssets','hpAssets']){
+        const allRows=await cdbGetAll(store,null,null);
+        const rows=(allRows||[]).filter(r=>tfCleanTin(r.tin)===tin);
+        for(const r of rows){ await cdbDeleteKey(store,r.id); deleted++; }
+      }
+      if(typeof CA_LAST_SYSTEM_LOAD_KEY!=='undefined') CA_LAST_SYSTEM_LOAD_KEY='';
+      if(typeof caClearSchedules==='function') caClearSchedules(currentClient?.name||'Client',tin,currentYA?.ya);
+      addAudit('User','CA','priorFixCAData: cleared '+deleted+' stale cached record(s) for TIN '+tin);
+    }
+    priorResetExtracted('taxcomp');
+    renderPriorYr();
+    showNotif('info','Ready to re-upload','Cache cleared. Select the tax computation PDF again in the dialog that opens.');
+    setTimeout(()=>{
+      const inp=document.getElementById('prior-taxcomp-file-input');
+      if(inp){inp.value='';inp.click();}
+    },300);
+  }catch(e){
+    showNotif('error','Fix failed',e.message||String(e));
+  }
+}
 async function priorHandleUpload(type,inp){
   if(!inp?.files?.[0]) return;
   if(!currentClient){showNotif('error','Prior Year Upload','Select or create a client first');return;}
@@ -8168,6 +8254,11 @@ async function priorHandleUpload(type,inp){
       ncExtracted.formc=data;
     }else{
       data=ncNormalizeTaxCompForFAHPCA(data,data._rawText||'',file.name);
+      // Runs the exact same coordinate CA/HP extraction every other
+      // upload entry point in the app uses (see ncApplyCoordinateCAHP) --
+      // this screen used to skip it entirely and only use the older,
+      // less reliable text-regex extraction.
+      await ncApplyCoordinateCAHP(data,file);
       ncUploaded.taxcomp=true;
       ncExtracted.taxcomp=data;
       if(Array.isArray(data.caSchedule)&&data.caSchedule.length&&typeof ncPopulateCAFromExtracted==='function') ncPopulateCAFromExtracted(data);
@@ -8649,6 +8740,69 @@ function profileExtractApplySideBySide(){
   renderExtract();
   showNotif('success','Profile Extract Saved','Form C extraction review posted to Client Profile');
 }
+let TC_PDF_SPLIT_OPEN=false;
+function tcTogglePDFSplit(){
+  TC_PDF_SPLIT_OPEN=!TC_PDF_SPLIT_OPEN;
+  renderExtract();
+  if(TC_PDF_SPLIT_OPEN) setTimeout(()=>tcLoadAndShowPDF(),0);
+}
+// Left = the actual source PDF rendered page-by-page (pdf.js canvases,
+// pulled back from the IndexedDB document archive so this works even
+// after a page reload). Right = the same extracted-data tables already
+// on this page, just condensed into one scrollable column next to the
+// PDF so each figure can be checked against where it came from.
+function tcRenderPDFSplitView(tc){
+  return `<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;margin-top:10px;height:70vh;min-height:420px">
+    <div style="background:var(--bg2);border:1px solid var(--line);border-radius:8px;overflow:hidden;display:flex;flex-direction:column">
+      <div style="padding:6px 10px;background:var(--bg3);border-bottom:1px solid var(--line);font-size:11px;font-weight:700;color:var(--t2)">\ud83d\udcc4 Source PDF (Tax Computation)</div>
+      <div id="tc-pdf-frame" style="flex:1;overflow:auto;background:#2b2b2b;padding:10px">
+        <div style="height:100%;display:flex;align-items:center;justify-content:center;text-align:center;color:#c7c7c7;font-size:12px;padding:24px">Loading source PDF from document archive...</div>
+      </div>
+    </div>
+    <div style="background:var(--bg2);border:1px solid var(--line);border-radius:8px;overflow:auto;padding:12px">
+      <div style="font-size:11px;font-weight:700;color:var(--t2);margin-bottom:8px">\ud83d\udcca Extracted Data \u2014 where each figure was read from</div>
+      <div style="font-size:10.5px;font-weight:700;color:var(--t3);text-transform:uppercase;margin:8px 0 4px">Key Figures</div>
+      <table class="t" style="width:100%;font-size:11px"><tbody>${peTaxCompFieldRows(tc)}</tbody></table>
+      <div style="font-size:10.5px;font-weight:700;color:var(--t3);text-transform:uppercase;margin:14px 0 4px">Capital Allowance (${(tc.caSchedule||[]).length} rows)</div>
+      ${peRenderTaxCompCA(tc.caSchedule||[])}
+      <div style="font-size:10.5px;font-weight:700;color:var(--t3);text-transform:uppercase;margin:14px 0 4px">Hire Purchase (${(tc.hpAssets||[]).length} assets)</div>
+      ${peRenderTaxCompHP(tc.hpAssets||[])}
+      <div style="font-size:10.5px;font-weight:700;color:var(--t3);text-transform:uppercase;margin:14px 0 4px">Add-backs (${(tc.addBacks||[]).length} items)</div>
+      ${peRenderTaxCompAddBacks(tc.addBacks||[])}
+    </div>
+  </div>`;
+}
+async function tcLoadAndShowPDF(containerId='tc-pdf-frame'){
+  const viewer=document.getElementById(containerId);
+  if(!viewer) return;
+  try{
+    const tin=tfCleanTin(currentClient?.tin);
+    const ya=ncExtracted?.taxcomp?.yearAssessment||(currentYA?.ya?currentYA.ya-1:null);
+    if(!tin||!ya){viewer.innerHTML='<div style="padding:24px;text-align:center;color:#c7c7c7;font-size:12px">Client TIN or tax computation year not known -- cannot look up the archived PDF.</div>';return;}
+    const rec=await cdbGet('docFiles',`${tin}_${ya}_taxcomp`);
+    if(!rec||!rec.dataURL){viewer.innerHTML='<div style="padding:24px;text-align:center;color:#c7c7c7;font-size:12px">No archived copy of the tax computation PDF found for this client/year. Re-upload it via "Upload / Re-upload Tax Comp" to enable this view.</div>';return;}
+    const blob=await(await fetch(rec.dataURL)).blob();
+    if(!window.pdfjsLib) throw new Error('PDF renderer not loaded');
+    pdfjsLib.GlobalWorkerOptions.workerSrc='pdf.worker.min.js';
+    const data=new Uint8Array(await blob.arrayBuffer());
+    const pdf=await pdfjsLib.getDocument({data}).promise;
+    viewer.innerHTML='<div style="display:flex;flex-direction:column;gap:12px;align-items:center;user-select:none;pointer-events:none"></div>';
+    const wrap=viewer.firstElementChild;
+    for(let p=1;p<=pdf.numPages;p++){
+      try{
+        const page=await pdf.getPage(p);
+        const viewport=page.getViewport({scale:1});
+        const canvas=document.createElement('canvas');
+        canvas.width=Math.ceil(viewport.width);canvas.height=Math.ceil(viewport.height);
+        canvas.style.cssText='display:block;width:100%;height:auto';
+        wrap.appendChild(canvas);
+        await page.render({canvasContext:canvas.getContext('2d'),viewport}).promise;
+      }catch(e){/* skip unrenderable page, continue with the rest */}
+    }
+  }catch(e){
+    viewer.innerHTML=`<div style="padding:24px;text-align:center;color:#c7c7c7;font-size:12px">Could not render source PDF: ${tfEsc(e.message)}</div>`;
+  }
+}
 function renderExtract(){
   const body=document.getElementById('extractBody');
   if(!body) return;
@@ -8747,14 +8901,19 @@ function renderExtract(){
           <div class="card-title">Tax Computation Extract Review</div>
           <div style="font-size:11px;color:var(--t3);margin-top:2px">Prior-year tax computation data is editable here. Stable opening balances can post to FA / HP / CA; profit, tax payable, add-backs and CP204 must be reviewed or recomputed for this year.</div>
         </div>
-        <button class="btn btn-ghost btn-sm" onclick="goTo('setup-prioryr')">Upload / Re-upload Tax Comp</button>
+        <div style="display:flex;gap:8px;flex-shrink:0">
+          <button class="btn btn-ghost btn-sm" onclick="tcTogglePDFSplit()">${TC_PDF_SPLIT_OPEN?'\u2715 Hide Source PDF':'\ud83d\udcc4 View Source PDF Side-by-Side'}</button>
+          <button class="btn btn-ghost btn-sm" onclick="goTo('setup-prioryr')">Upload / Re-upload Tax Comp</button>
+        </div>
       </div>
+      ${TC_PDF_SPLIT_OPEN?tcRenderPDFSplitView(tc):''}
       <div style="display:grid;grid-template-columns:repeat(4,minmax(130px,1fr));gap:8px;margin-top:10px">
         <div class="stat sb"><div class="stat-label">Source</div><div class="stat-value" style="font-size:12px">${tfEsc(tc.extractedFrom||tc.source_document||'No tax comp uploaded')}</div><div class="stat-sub">tax-comp-skill</div></div>
         <div class="stat sg"><div class="stat-label">CA Rows</div><div class="stat-value">${(tc.caSchedule||[]).length||0}</div><div class="stat-sub">Opening FA / CA</div></div>
         <div class="stat sa"><div class="stat-label">HP Rows</div><div class="stat-value">${(tc.hpAssets||[]).length||0}</div><div class="stat-sub">HP creditors</div></div>
         <div class="stat sb"><div class="stat-label">Add-backs</div><div class="stat-value">${(tc.addBacks||[]).length||0}</div><div class="stat-sub">Review required</div></div>
       </div>
+      ${ncCaHpStatusBanner()}
       <div style="overflow:auto;margin-top:10px"><table class="t" style="min-width:860px">
         <thead><tr><th>Tax Comp Field</th><th>Extracted Value</th><th>User Confirm / Edit</th><th>Status</th></tr></thead>
         <tbody>${peTaxCompFieldRows(tc)}</tbody>
@@ -12254,27 +12413,9 @@ Extract EVERY individual asset and every director/shareholder/beneficial-owner s
   }
   if(type==='taxcomp') data=ncNormalizeTaxCompForFAHPCA(data,(fallbackData?._rawText||''),file.name);
   if(type==='taxcomp'){
-    try{
-      const coordJson=await ncFetchCoordinateCASchedule(file);
-      if(coordJson){
-        const coordTotal=ncCoordinateCAScheduleTotal(coordJson);
-        const referenceTotal=ncNum(data.capitalAllowance);
-        const reconciles=referenceTotal>0&&coordTotal>0&&Math.abs(coordTotal-referenceTotal)<=Math.max(1000,referenceTotal*0.05);
-        // Keep the accurate, coordinate-extracted schedule available for manual reference
-        // even when it isn't auto-posted -- the extraction itself is reliable; what's
-        // uncertain is only whether its column totals mean the same thing as the tax
-        // computation's headline "Capital allowances (-)" figure (see below).
-        data.coordinateCASchedule=coordJson;
-        if(reconciles){
-          data.caSchedule=ncConvertCoordinateCASchedule(coordJson);
-          data.caScheduleSource='coordinate-extractor';
-          addAudit('AI','CA','Coordinate-based CA schedule extraction used ('+data.caSchedule.length+' rows across '+coordJson.schedules.length+' sub-schedules); reconciles to tax computation total within tolerance.');
-        }else{
-          data.reviewFlags=[...(data.reviewFlags||[]),`A detailed capital allowance schedule (${coordJson.schedules.length} sub-schedule(s), coordinate-extracted from the source PDF) was found, totalling RM ${coordTotal.toLocaleString('en-MY',{minimumFractionDigits:2})} in initial + annual allowances -- but this does not match the RM ${referenceTotal.toLocaleString('en-MY',{minimumFractionDigits:2})} posted as "Capital allowances (-)" in the tax computation. This is usually because the schedule states each asset's allowance position (which may include amounts not yet absorbed against income and carried forward), not just this year's utilised amount, or because the document covers multiple businesses. The detailed rows were NOT auto-posted to FA/HP/CA opening balances; open Tax Computation \u2192 Capital Allowances to review them against the source PDF before entering assets manually.`];
-          addAudit('AI','CA','Coordinate-based CA schedule extraction found but total does not match posted capital allowance ('+coordTotal+' vs '+referenceTotal+') -- not auto-posted to FA/HP/CA; raw schedule kept for manual review.');
-        }
-      }
-    }catch(e){console.log('[TaxFlow] Coordinate CA schedule step skipped:',e.message);}
+    // Runs the exact same coordinate CA/HP extraction every other
+    // upload entry point in the app uses (see ncApplyCoordinateCAHP).
+    await ncApplyCoordinateCAHP(data,file);
   }
 
   // Complete steps
@@ -14290,6 +14431,42 @@ function ncCompleteFormCData(data,filename,text=''){
   out.extractionNote='Form C Skill prefill: supported fields are filled; missing or legally sensitive fields are marked for agent review.';
   return out;
 }
+// Generic parser for the "Non-allowable expenditure and charges" section
+// of the Business Income Schedule -- every tax agent's software we've
+// seen (LIM TANG, WONG CHAU HWA) prints this as one description-then-
+// amount line per item, with an optional "R: ..." reference/remark line
+// immediately after (which becomes that item's note), ending at a bare
+// subtotal line. Verified to capture every line item and reconcile
+// exactly to the printed subtotal on two different agents' documents --
+// replaces an earlier 6-item hardcoded keyword whitelist that silently
+// dropped everything not on that list.
+function ncParseAddBacksFromText(text){
+  const raw=String(text||'');
+  const idx=raw.search(/Non-allowable\s+expenditure\s+and\s+charges/i);
+  if(idx<0) return [];
+  const tail=raw.slice(idx+'Non-allowable expenditure and charges'.length);
+  const lines=tail.split(/\n+/).map(l=>l.trim()).filter(Boolean);
+  const items=[];
+  const itemRe=/^([A-Za-z][A-Za-z0-9 /&.,'()-]{2,70}?)\s+\(?(\d{1,3}(?:,\d{3})*(?:\.\d+)?)\)?$/;
+  const noteRe=/^R:\s*(.+)$/i;
+  const stopRe=/^(Less|Adjusted\s+Business\s+Income|STATUTORY\s+BUSINESS\s+INCOME|Add:\s*Balancing|Claim\s+for\s+Special|Deduction\s+for\s+expenses)/i;
+  const subtotalRe=/^\(?\d{1,3}(?:,\d{3})*(?:\.\d+)?\)?$/;
+  for(const line of lines){
+    if(stopRe.test(line)) break;
+    const noteM=line.match(noteRe);
+    if(noteM){
+      if(items.length) items[items.length-1].note=(items[items.length-1].note?items[items.length-1].note+'; ':'')+noteM[1];
+      continue;
+    }
+    const m=line.match(itemRe);
+    if(m){
+      items.push({description:m[1].trim(),amount:parseFloat(m[2].replace(/,/g,'')),section:'S.39(1)',treatment:'Add Back',source_page_or_schedule:'Business Income Schedule'});
+      continue;
+    }
+    if(subtotalRe.test(line)) break; // bare number = section subtotal, section is done
+  }
+  return items;
+}
 function ncExtractTaxCompFromText(text,filename){
   const findAmt=(...pats)=>{for(const p of pats){const m=text.match(p);if(m&&m[1]){const n=parseFloat(m[1].replace(/,/g,''));if(!isNaN(n)&&n>0)return n;}}return null;};
   const strongAmt=(label,minAbs=0)=>{
@@ -14310,8 +14487,7 @@ function ncExtractTaxCompFromText(text,filename){
   const looseBC=findAmt(/BALANCING\s+CHARGE[:\s]*([\d,]+(?:\.\d{2})?)/i);
   const ca=strongAmt(/capital\s+allowances?/i,100)||null;
   const bc=strongAmt(/balancing\s+charge/i,1)||looseBC;
-  const addBackItems=[];
-  [{key:'Advertisement',pat:/Advertisement\s+([\d,]+)/i},{key:'Depreciation',pat:/Depreciation\s+([\d,]+)/i},{key:'Entertainment',pat:/Entertainment\s+([\d,]+)/i},{key:'Penalty',pat:/Penalty\s+([\d,]+)/i},{key:'Stamp Duty',pat:/Stamp\s+duty\s+([\d,]+)/i},{key:'Gift and Donation',pat:/Gift\s+and\s+donation\s+([\d,]+)/i}].forEach(({key,pat})=>{const m=text.match(pat);if(m){const a=parseFloat(m[1].replace(/,/g,''));if(a>0)addBackItems.push({description:key,amount:a,section:'S.39(1)',treatment:'Add Back'});}});
+  const addBackItems=ncParseAddBacksFromText(text);
   const people=ncParseTaxCompPeopleSchedules(text||'');
   const caRows=typeof ncParseCAAssetsFromText==='function'?ncParseCAAssetsFromText(text||'',filename):[];
   const hpRows=typeof ncParseHPAssetsFromText==='function'?ncParseHPAssetsFromText(text||'',filename):[];
@@ -14668,11 +14844,19 @@ function ncNormalizeTaxCompForFAHPCA(data,text='',filename=''){
     out.shareholderSchedule=tcCleanPeopleForSchedule(out.shareholderSchedule,'shareholders');
     out.beneficialOwnerSchedule=tcCleanPeopleForSchedule(out.beneficialOwnerSchedule,'beneficialOwners');
   }
-  const parsedCA=ncParseCAAssetsFromText(text||out._rawText||'',filename||out.extractedFrom);
   const caRowHasAmount=a=>ncNum(a.originalCost||a.origCost||a.qeCF||a.qeBF||a.qeAdd||a.reCarriedForward||a.openingRE||a.totalCA||a.sourceTotalCA||a.allowable)>0;
   const existingCA=(out.caSchedule||[]).filter(caRowHasAmount);
-  if(parsedCA.length>existingCA.length) out.caSchedule=parsedCA;
-  else if(existingCA.length) out.caSchedule=existingCA;
+  if(out.caScheduleSource==='coordinate-extractor'&&existingCA.length){
+    // Already the reliable per-asset extraction (verified to reconcile
+    // exactly to the source PDF's own GRAND TOTAL row) -- never let the
+    // weaker text-regex parser below re-derive and silently replace it
+    // just because it happens to produce a different row count.
+    out.caSchedule=existingCA;
+  }else{
+    const parsedCA=ncParseCAAssetsFromText(text||out._rawText||'',filename||out.extractedFrom);
+    if(parsedCA.length>existingCA.length) out.caSchedule=parsedCA;
+    else if(existingCA.length) out.caSchedule=existingCA;
+  }
   if(!(out.caSchedule||[]).length){
     const novutalCA=ncNovutalTaxCompFallback(filename||out.extractedFrom||out.source_document,{allowDemoFallback:out.demoFallbackAllowed===true});
     if(novutalCA.length) out.caSchedule=novutalCA;
@@ -14791,46 +14975,243 @@ function ncDateInputValue(v,fallback){
 // customer tax computations. This is used ONLY as an enhancement on top of
 // the existing pipeline, and fails silently (falls back to whatever the
 // AI/regex path already produced) if the local proxy isn't running.
+const NC_CA_HP_STATUS={ca:{state:'not_attempted'},hp:{state:'not_attempted'}};
+// Renders a plain-language banner explaining exactly why CA/HP rows are
+// sparse when they are -- "server unreachable" and "PDF has no CA/HP
+// pages" look identical from the row count alone, so this makes the
+// actual cause visible instead of the app silently degrading to the old
+// thin fallback with no explanation.
+function ncCaHpStatusBanner(){
+  const rows=[['ca','Capital Allowance'],['hp','Hire Purchase']].map(([k,label])=>{
+    const s=NC_CA_HP_STATUS[k]||{state:'not_attempted'};
+    if(s.state==='ok') return `<div style="font-size:11px;color:var(--green3)">\u2713 ${label} coordinate extraction: connected to ${tfEsc(s.base||'')}, ${k==='ca'?(s.rows||0)+' asset row(s)':(s.assets||0)+' HP asset(s)'} found.</div>`;
+    if(s.state==='not_attempted') return `<div style="font-size:11px;color:var(--t3)">\u25cb ${label} coordinate extraction: not attempted yet in this browser session. This banner only updates after you actually upload/select a PDF file below -- data already on screen may be from a previous session and won't refresh this line on its own.</div>`;
+    if(s.state==='unreachable') return `<div style="font-size:11px;color:var(--red3)">\u26a0 ${label} coordinate extraction server is NOT reachable at ${tfEsc(s.base||'')} (${tfEsc(s.reason||'')}). Falling back to weaker text-scan extraction \u2014 this is very likely why rows look sparse or category-only. Start <code>ca_hp_server.py</code> (see requirements.txt) and confirm Settings \u2192 CA/HP Schedule Extraction \u2192 Test Connection succeeds, then re-upload this PDF.</div>`;
+    if(s.state==='http_error') return `<div style="font-size:11px;color:var(--red3)">\u26a0 ${label} coordinate extraction server at ${tfEsc(s.base||'')} returned an error (${tfEsc(s.reason||'')}). Check the server log.</div>`;
+    if(s.state==='no_data') return `<div style="font-size:11px;color:var(--amber3)">\u26a0 ${label} coordinate server reachable but found no matching pages in this PDF \u2014 confirm the PDF actually contains a ${label} schedule.</div>`;
+    return '';
+  }).filter(Boolean).join('');
+  return rows?`<div style="margin-top:8px;padding:8px 10px;background:var(--bg3);border:1px solid var(--line2);border-radius:6px;display:flex;flex-direction:column;gap:4px">${rows}</div>`:'';
+}
 async function ncFetchCoordinateCASchedule(file){
-  if(!file||!/\.pdf$/i.test(file.name||'')) return null;
+  if(!file||!/\.pdf$/i.test(file.name||'')){NC_CA_HP_STATUS.ca={state:'skipped',reason:'Not a PDF file'};return null;}
   try{
-    const base=(typeof API_CONFIG!=='undefined'&&API_CONFIG.OCR_BASE)?API_CONFIG.OCR_BASE:'http://127.0.0.1:5050';
+    const base=(typeof API_CONFIG!=='undefined'&&API_CONFIG.CA_HP_BASE)?API_CONFIG.CA_HP_BASE:'http://127.0.0.1:5051';
     const endpoint=base+'/api/ca-schedule?filename='+encodeURIComponent(file.name||'upload.pdf');
     const resp=await fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/pdf'},body:file});
-    if(!resp.ok) return null;
+    if(!resp.ok){NC_CA_HP_STATUS.ca={state:'http_error',reason:'Server responded HTTP '+resp.status,base};return null;}
     const json=await resp.json();
-    if(!json||!json.ok||!Array.isArray(json.schedules)||!json.schedules.length) return null;
+    if(!json||!json.ok||!Array.isArray(json.schedules)||!json.schedules.length){NC_CA_HP_STATUS.ca={state:'no_data',reason:'Server reachable but found no CA schedule pages in this PDF',base};return null;}
+    NC_CA_HP_STATUS.ca={state:'ok',base,rows:json.schedules.reduce((s,sc)=>s+(sc.rows||[]).length,0)};
     return json;
   }catch(e){
+    NC_CA_HP_STATUS.ca={state:'unreachable',reason:e.message,base:(typeof API_CONFIG!=='undefined'?API_CONFIG.CA_HP_BASE:'')||'http://127.0.0.1:5051'};
     console.log('[TaxFlow] Coordinate CA schedule extraction unavailable:',e.message);
     return null;
   }
 }
+// Same server, per-asset Hire Purchase Creditors Schedule extraction --
+// matches the "Finance terms + year-by-year Payment information" format
+// (Summary of Hire Purchase Creditors + per-asset schedule pages).
+// Returns {ok, assets:[{description, originalCost, dateOfPurchase,
+// depositAmount, totalInstalments, interestAmount, monthlyInstalment,
+// finalInstalment, principalAmount, vehicleType, qualifyAmount,
+// yearlyPayments:[{year,noOfInst,principal,interest,total}], reconciled,
+// sumPrincipal, sumInterest}]} -- reconciled=false is EXPECTED (not a
+// bug) for a loan that isn't fully repaid as at the reporting YA.
+async function ncFetchCoordinateHPSchedule(file){
+  if(!file||!/\.pdf$/i.test(file.name||'')){NC_CA_HP_STATUS.hp={state:'skipped',reason:'Not a PDF file'};return null;}
+  try{
+    const base=(typeof API_CONFIG!=='undefined'&&API_CONFIG.CA_HP_BASE)?API_CONFIG.CA_HP_BASE:'http://127.0.0.1:5051';
+    const endpoint=base+'/api/hp-schedule?filename='+encodeURIComponent(file.name||'upload.pdf');
+    const resp=await fetch(endpoint,{method:'POST',headers:{'Content-Type':'application/pdf'},body:file});
+    if(!resp.ok){NC_CA_HP_STATUS.hp={state:'http_error',reason:'Server responded HTTP '+resp.status,base};return null;}
+    const json=await resp.json();
+    if(!json||!json.ok||!Array.isArray(json.assets)||!json.assets.length){NC_CA_HP_STATUS.hp={state:'no_data',reason:'Server reachable but found no HP schedule pages in this PDF',base};return null;}
+    NC_CA_HP_STATUS.hp={state:'ok',base,assets:json.assets.length};
+    return json;
+  }catch(e){
+    NC_CA_HP_STATUS.hp={state:'unreachable',reason:e.message,base:(typeof API_CONFIG!=='undefined'?API_CONFIG.CA_HP_BASE:'')||'http://127.0.0.1:5051'};
+    console.log('[TaxFlow] Coordinate HP schedule extraction unavailable:',e.message);
+    return null;
+  }
+}
+// ══════════════════════════════════════════════════════════════════
+// SINGLE SOURCE OF TRUTH for coordinate-based CA/HP extraction.
+// Every upload entry point in the app (New Client Wizard's tax comp
+// upload, "Upload Prior Year Documents", the FA/HP/CA module's direct
+// upload) MUST call this instead of re-implementing the fetch +
+// reconciliation + data.caSchedule/hpAssets assignment inline -- three
+// separate copies of this logic drifting out of sync is exactly what
+// caused "Upload Prior Year Documents" to silently keep using the old
+// text-regex extractor even after the coordinate server was fixed.
+// Mutates `data` in place (adds/overwrites caSchedule, hpAssets,
+// coordinateCASchedule, coordinateHPSchedule, caReconciliation,
+// caScheduleSource, reviewFlags) and returns it.
+// ══════════════════════════════════════════════════════════════════
+async function ncApplyCoordinateCAHP(data,file){
+  if(!data||!file) return data;
+  try{
+    const coordJson=await ncFetchCoordinateCASchedule(file);
+    if(coordJson){
+      const recon=ncCoordinateCAReconciliation(coordJson);
+      const referenceTotal=ncNum(data.capitalAllowance);
+      const coordTotal=ncCoordinateCAScheduleTotal(coordJson);
+      const reconcilesToTaxComp=referenceTotal>0&&coordTotal>0&&Math.abs(coordTotal-referenceTotal)<=Math.max(1000,referenceTotal*0.05);
+      data.coordinateCASchedule=coordJson;
+      data.caReconciliation=recon;
+      if(recon&&!recon.reconciled&&recon.mismatches.length){
+        data.reviewFlags=[...(data.reviewFlags||[]),`Capital allowance schedule extraction does NOT reconcile to the source PDF's own GRAND TOTAL row: ${recon.mismatches.map(m=>`${m.column} computed RM ${ncNum(m.computed).toLocaleString('en-MY',{minimumFractionDigits:2})} vs PDF RM ${ncNum(m.expected).toLocaleString('en-MY',{minimumFractionDigits:2})} (diff RM ${ncNum(m.diff).toLocaleString('en-MY',{minimumFractionDigits:2})})`).join('; ')}. Review the CA detail table -- mismatched columns are shown in red -- before finalising.`];
+        addAudit('AI','CA','Coordinate CA extraction does NOT reconcile to source PDF grand total row -- '+recon.mismatches.length+' column(s) mismatched; flagged for review.');
+      }
+      if(reconcilesToTaxComp||(recon&&recon.reconciled)){
+        data.caSchedule=ncConvertCoordinateCASchedule(coordJson);
+        data.caScheduleSource='coordinate-extractor';
+        // The old flat-regex mismatch flags are stale once the reliable
+        // coordinate schedule has replaced caSchedule -- drop them so
+        // the review panel doesn't show a self-contradicting warning.
+        data.reviewFlags=(data.reviewFlags||[]).filter(f=>!/does not agree to tax computation total|appears incomplete or in an unrecognised layout/i.test(f));
+        addAudit('AI','CA','Coordinate-based CA schedule extraction used ('+data.caSchedule.length+' rows across '+coordJson.schedules.length+' sub-schedules)'+(reconcilesToTaxComp?'; reconciles to tax computation total within tolerance':'')+(recon&&recon.reconciled?(reconcilesToTaxComp?' and reconciles exactly to the source PDF grand total.':'; reconciles exactly to the source PDF\'s own grand total (tax computation summary figure was unreadable or missing, so this exact-match was used instead).'):'.'));
+      }else{
+        data.reviewFlags=[...(data.reviewFlags||[]),`A detailed capital allowance schedule (${coordJson.schedules.length} sub-schedule(s), coordinate-extracted from the source PDF${recon&&recon.reconciled?' -- reconciles exactly to that PDF\'s own grand total row':''}) was found, totalling RM ${coordTotal.toLocaleString('en-MY',{minimumFractionDigits:2})} in initial + annual allowances -- but this does not match the RM ${referenceTotal.toLocaleString('en-MY',{minimumFractionDigits:2})} posted as "Capital allowances (-)" in the tax computation. This is usually because the schedule states each asset's allowance position (which may include amounts not yet absorbed against income and carried forward), not just this year's utilised amount, or because the document covers multiple businesses. The detailed rows were NOT auto-posted to FA/HP/CA opening balances; open Tax Computation \u2192 Capital Allowances to review them against the source PDF before entering assets manually.`];
+        addAudit('AI','CA','Coordinate-based CA schedule extraction found but total does not match posted capital allowance ('+coordTotal+' vs '+referenceTotal+') -- not auto-posted to FA/HP/CA; raw schedule kept for manual review.');
+      }
+    }
+  }catch(e){console.log('[TaxFlow] Coordinate CA schedule step skipped:',e.message);}
+  try{
+    const hpJson=await ncFetchCoordinateHPSchedule(file);
+    if(hpJson&&Array.isArray(hpJson.assets)&&hpJson.assets.length){
+      data.coordinateHPSchedule=hpJson;
+      const unreconciled=hpJson.assets.filter(a=>!a.reconciled);
+      if(unreconciled.length){
+        data.reviewFlags=[...(data.reviewFlags||[]),`${unreconciled.length} HP asset(s) show payment years that don't total to the stated principal/interest yet (loan not fully repaid as at this YA) -- confirm against the source document: ${unreconciled.map(a=>a.description).join('; ')}.`];
+      }
+      data.hpAssets=hpJson.assets.map(a=>{
+        const sumPrincipal=(a.yearlyPayments||[]).reduce((s,p)=>s+(Number(p.principal)||0),0);
+        const sumInterest=(a.yearlyPayments||[]).reduce((s,p)=>s+(Number(p.interest)||0),0);
+        return{
+          description:a.description,principal:ncNum(a.principalAmount),interest:ncNum(a.interestAmount),
+          qe:ncNum(a.qualifyAmount),outstandingBalance:Math.max(0,ncNum(a.principalAmount)-sumPrincipal),
+          principalPaid:sumPrincipal,interestPaid:sumInterest,
+          note:a.reconciled?'Payment years reconcile exactly to stated Principal/Interest (coordinate-extracted).':'Payment years shown do not yet total the stated Principal/Interest -- loan not fully repaid as at this YA is expected here; confirm against source document.',
+          taxTreatment:'HP interest review; principal capital/add-back review',
+          source_page_or_schedule:'Hire Purchase Creditors Schedule (coordinate-extracted)'
+        };
+      });
+      if(currentYA){
+        currentYA.hpSchedule=hpJson.assets.map((a,i)=>ncConvertCoordinateHPAsset(a,i));
+        tfSaveState();
+      }
+      addAudit('AI','HP','Coordinate-based HP schedule extraction used ('+hpJson.assets.length+' asset(s), '+unreconciled.length+' not yet fully reconciled -- expected if the loan is still being repaid).');
+    }
+  }catch(e){console.log('[TaxFlow] Coordinate HP schedule step skipped:',e.message);}
+  return data;
+}
+// Maps a coordinate-extracted HP asset straight onto the app's
+// currentYA.hpSchedule row shape (see hpEnsureSchedule) -- the shapes
+// already match field-for-field, so this is a near passthrough plus a
+// stable id and the requiresReview flag.
+function ncConvertCoordinateHPAsset(a,idx){
+  return {
+    id:'hp'+Date.now()+idx,
+    description:a.description||'HP asset (required -- fill in)',
+    originalCost:ncNum(a.originalCost),
+    dateOfPurchase:a.dateOfPurchase||'',
+    depositAmount:ncNum(a.depositAmount),
+    totalInstalments:ncNum(a.totalInstalments),
+    interestAmount:ncNum(a.interestAmount),
+    monthlyInstalment:ncNum(a.monthlyInstalment),
+    finalInstalment:ncNum(a.finalInstalment),
+    principalAmount:ncNum(a.principalAmount),
+    vehicleType:a.vehicleType||'none',
+    qualifyAmount:ncNum(a.qualifyAmount),
+    yearlyPayments:(a.yearlyPayments||[]).map(p=>({
+      year:p.year,noOfInst:ncNum(p.noOfInst),principal:ncNum(p.principal),
+      interest:ncNum(p.interest),total:ncNum(p.total||(ncNum(p.principal)+ncNum(p.interest))),
+      qe:ncNum(p.qe),remark:p.remark||''
+    })),
+    requiresReview:!a.reconciled,
+    coordinateReconciled:!!a.reconciled,
+    note:a.reconciled?'':'Payment years shown do not yet sum to the stated principal/interest -- this loan is not fully repaid as at this YA. Confirm against the source document; add later years as they occur.',
+  };
+}
+
 function ncConvertCoordinateCASchedule(json){
   const rows=[];
   (json.schedules||[]).forEach(sched=>{
+    let lastDesc='',lastCost=0;
     (sched.rows||[]).forEach(r=>{
+      const trulyGrouped=r.assetType==null; // older/summary-only schema: no assetType field at all
+      const blank=!trulyGrouped&&!String(r.assetType||'').trim();
+      let assetType,note,isContinuation=false;
+      if(!trulyGrouped&&!blank){
+        assetType=r.assetType;
+        lastDesc=r.assetType;
+        // Reset per new asset -- MUST NOT fall back to the previous row's
+        // lastCost here. A row with its own description but a blank
+        // Original Cost (e.g. an asset written off this year, whose cost
+        // was recorded in an earlier YA's schedule not covered by this
+        // extraction) is a DIFFERENT asset from whatever preceded it in
+        // the list; borrowing the neighbour's cost silently produces a
+        // wrong number. Fall back to this row's own qeCF (its cumulative
+        // qualifying expenditure to date) instead, which is the correct
+        // proxy for "cost" when Original Cost isn't restated.
+        lastCost=ncNum(r.originalCost)||ncNum(r.qeCF)||ncNum(r.qeBF);
+        note=`Coordinate-extracted per-asset row from ${sched.code||'CA'}: ${sched.title} (page ${Array.isArray(sched.pages)?sched.pages.join('/'):sched.page||''}). Confirm against the source document before final posting.`;
+      }else if(blank&&lastDesc){
+        // Continuation row for the same physical asset (typically HP-financed:
+        // additional Qualifying Expenditure recognised as later instalments are
+        // paid) -- inherit the description instead of leaving it blank, which
+        // reads as broken/duplicate data in any flat list of rows.
+        assetType=`${lastDesc} \u2014 additional QE recognised ${r.yearAcquired||'later year'}`;
+        isContinuation=true;
+        note=`Continuation row for "${lastDesc}" -- same physical asset, additional Qualifying Expenditure recognised in ${r.yearAcquired||'a later year'} (typical for HP-financed assets, where QE is recognised as instalments are paid rather than upfront). Confirm against the source document.`;
+      }else{
+        assetType=`${sched.code||'CA'} \u2014 assets acquired ${r.yearAcquired||''} (grouped by year/rate; source document does not itemise individual assets at this level)`;
+        lastDesc='';lastCost=0;
+        note=`Coordinate-extracted from ${sched.code||'CA'}: ${sched.title} (page ${Array.isArray(sched.pages)?sched.pages.join('/'):sched.page||''}). Grouped by acquisition year and allowance rate, not itemised per asset -- the source PDF's capital allowance schedule does not list individual asset descriptions at this level. Confirm against the source document before final posting.`;
+      }
       const totalCA=ncNum(r.ia)+ncNum(r.aa);
+      // originalCost stays exactly as printed (0 on continuation rows) so
+      // column totals keep reconciling exactly to the PDF's own GRAND
+      // TOTAL row. assetTotalCost is the same figure PROPAGATED across
+      // that asset's continuation rows -- use this one for any per-asset
+      // display or rollover, so "Cost" never shows blank/zero for an
+      // asset that legitimately cost something just because this
+      // particular row happens to be a later year's instalment-QE line.
       rows.push({
         categoryName:sched.title||sched.code||'Capital Allowances',
-        assetType:`${sched.code} \u2014 assets acquired ${r.yearAcquired||''} (grouped by year/rate; source document does not itemise individual assets at this level)`,
+        assetType,assetGroupKey:lastDesc||assetType,isContinuation,
         yearAcquired:r.yearAcquired||'',
         iaRate:r.iaRate||20,
         aaRate:r.aaRate||10,
-        originalCost:ncNum(r.qeBF)+ncNum(r.qeAdd),
+        originalCost:ncNum(r.originalCost),assetTotalCost:lastCost||ncNum(r.originalCost),
         qeBF:ncNum(r.qeBF),qeAdd:ncNum(r.qeAdd),qeDisp:ncNum(r.qeDisp),qeCF:ncNum(r.qeCF),
         reBF:ncNum(r.reBF),reAdd:ncNum(r.reAdd),reDisp:ncNum(r.reDisp),
-        ia:ncNum(r.ia),aa:ncNum(r.aa),totalCA,
+        ia:ncNum(r.ia),aa:ncNum(r.aa),totalCA,sourceTotalCA:totalCA,
         reCarriedForward:ncNum(r.reCF),openingRE:ncNum(r.reCF),
         disposed:ncNum(r.qeDisp)!==0||ncNum(r.reDisp)!==0,
         writtenOff:false,hp:false,
         review_status:'review_required',
-        note:`Coordinate-extracted from ${sched.code}: ${sched.title} (page ${Array.isArray(sched.pages)?sched.pages.join('/'):sched.page}). Grouped by acquisition year and allowance rate, not itemised per asset -- the source PDF's capital allowance schedule does not list individual asset descriptions at this level. Confirm against the source document before final posting.`,
-        source_page_or_schedule:`${sched.code} p.${Array.isArray(sched.pages)?sched.pages.join('/'):sched.page}`
+        note,
+        source_page_or_schedule:`${sched.code||'CA'} p.${Array.isArray(sched.pages)?sched.pages.join('/'):sched.page||''}`
       });
     });
   });
   return rows;
+}
+// Reads the server's own PDF-grand-total reconciliation (exact, column-by-
+// column against the printed GRAND TOTAL row) rather than approximating
+// from a single ia+aa figure -- this is what drives the red mismatch
+// banner in the CA detail table.
+function ncCoordinateCAReconciliation(json){
+  if(!json) return null;
+  return {
+    reconciled:!!json.reconciled,
+    grandTotal:json.grandTotal||null,
+    computedTotal:json.computedTotal||null,
+    mismatches:json.mismatches||[],
+  };
 }
 function ncCoordinateCAScheduleTotal(json){
   let ia=0,aa=0;
@@ -14849,6 +15230,7 @@ function ncPopulateCAFromExtracted(data){
   if(isDemoLoad){CA_DB.company='AILS SDN. BHD.';CA_DB.tin='C24657764090';return;}
   CA_DB.company=companyName||'Unknown';
   CA_DB.tin=ncExtracted.formc?.tinNo||'';
+  CA_DB.ya=data.yearAssessment||(currentYA?.ya?currentYA.ya-1:null)||CA_DB.ya||new Date().getFullYear();
   CA_DB.source='upload';
   CA_DB.disposal={items:[],writtenOff:[]};
   CA_DB.hp=[];
@@ -14862,12 +15244,12 @@ function ncPopulateCAFromExtracted(data){
       const cat=a.categoryName||guessCategory(a.assetType||a.description||'');
       if(!catMap[cat])catMap[cat]={catId:cat.replace(/\s+/g,'').toLowerCase(),catName:cat,assets:[]};
       const sourceCa=ncNum(a.sourceTotalCA||a.totalCA||a.allowable);
-      const hasCost=ncNum(a.originalCost||a.origCost||a.cost)>0;
+      const hasCost=ncNum(a.originalCost||a.origCost||a.cost||a.assetTotalCost)>0;
       catMap[cat].assets.push(caCalcAsset({
         desc:a.assetType||a.description||a.categoryName||'Fixed asset / CA schedule row',
         yr:a.yearAcquired||a.yr||'',
         iaRate:ncNum(a.iaRate)||20,
-        origCost:ncNum(a.originalCost||a.origCost||a.cost),
+        origCost:ncNum(a.originalCost||a.origCost||a.cost||a.assetTotalCost),
         qeBF:ncNum(a.qeBF||a.qeCF),
         qeAdd:ncNum(a.qeAdd),
         qeDisp:ncNum(a.qeDisp),
@@ -14896,6 +15278,7 @@ function ncPopulateCAFromExtracted(data){
     CA_DB.disposal=caRowsToDisposal(data.caSchedule,data.disposals||[]);
     CA_DB.hp=(data.hpAssets||CA_DB.hp||[]).map(h=>({...h,desc:h.desc||h.description,note:h.note||'',taxTreatment:h.taxTreatment||'HP interest review; principal capital/add-back review'}));
     CA_DB.importReviewFlags=data.reviewFlags||[];
+    CA_DB.pdfReconciliation=data.caReconciliation||null;
     addAudit('AI','CA','CA_DB: '+sourceCaRows.length+' assets for '+CA_DB.company+' with '+(data.reviewFlags||[]).length+' review flags');
   }else{CA_DB.detail=[];CA_DB.summary=[];ncShowAIStatus('âš ï¸ No CA schedule found â€” enter assets manually in FA module');}
 }
@@ -16231,7 +16614,7 @@ function renderCASummary() {
     el.innerHTML=`<div class="card" style="padding:28px;text-align:center;color:var(--t2)">
       <div style="font-size:16px;font-weight:800;margin-bottom:8px">${CA_DB.company||'Client'} - No FA / HP / CA opening balance loaded</div>
       <div style="font-size:12px;color:var(--t3);margin-bottom:14px">tax-comp-skill is active, but no matching detailed CA rows were found for this client. Upload/import the client's prior-year tax computation pages 5-16.</div>
-      <button class="btn btn-primary btn-sm" onclick="caImportFromUpload()">Import from Upload</button>
+      <button class="btn btn-primary btn-sm" onclick="caOpenUpload()">Import from Upload</button>
     </div>`;
     return;
   }
@@ -16322,12 +16705,12 @@ function renderCADetail() {
     el.innerHTML=`<div class="card" style="padding:28px;text-align:center;color:var(--t2)">
       <div style="font-size:16px;font-weight:800;margin-bottom:8px">${CA_DB.company||'Client'} - No detail schedule loaded</div>
       <div style="font-size:12px;color:var(--t3);margin-bottom:14px">Import the Novutal tax computation to populate pages 6-11. AILS sample rows are hidden.</div>
-      <button class="btn btn-primary btn-sm" onclick="caImportFromUpload()">Import from Upload</button>
+      <button class="btn btn-primary btn-sm" onclick="caOpenUpload()">Import from Upload</button>
     </div>`;
     return;
   }
   const TH = (t,w='') => `<th style="text-align:right;padding:5px 6px;background:var(--bg3);border:1px solid var(--line2);font-size:9.5px;font-weight:700;color:var(--t3);white-space:nowrap;${w?'width:'+w:''}">${t}</th>`;
-  el.innerHTML = CA_DB.detail.map((cat, catIdx) => {
+  el.innerHTML = caPdfStyleHeader('CAPITAL ALLOWANCE SCHEDULE \u2014 DETAIL') + CA_DB.detail.map((cat, catIdx) => {
     const catTot = {qeBF:0,qeAdd:0,qeDisp:0,qeCF:0,reBF:0,reAdd:0,reDisp:0,ia:0,aa:0,allowable:0,reCF:0};
     cat.assets.forEach(a=>{catTot.qeBF+=a.qeBF;catTot.qeAdd+=a.qeAdd;catTot.qeDisp+=a.qeDisp;catTot.qeCF+=a.qeCF;catTot.reBF+=a.reBF;catTot.reAdd+=a.reAdd;catTot.reDisp+=a.reDisp;catTot.ia+=a.ia;catTot.aa+=a.aa;catTot.allowable+=a.allowable;catTot.reCF+=a.reCF;});
     return `
@@ -16381,13 +16764,26 @@ function renderCADetail() {
     </div>`;
   }).join('') + `
   <div style="background:var(--bg-card);border:2px solid var(--blue-glow);border-radius:8px;padding:12px 16px">
-    <div style="font-weight:700;font-size:13px;color:var(--blue3);margin-bottom:8px">GRAND TOTAL â€” All Categories</div>
+    <div style="font-weight:700;font-size:13px;color:var(--blue3);margin-bottom:8px">GRAND TOTAL — All Categories</div>
     <div style="display:grid;grid-template-columns:repeat(5,1fr);gap:10px">
     ${(()=>{const gt={ia:0,aa:0,allowable:0,reCF:0,qeCF:0};CA_DB.detail.forEach(cat=>cat.assets.forEach(a=>{gt.ia+=a.ia;gt.aa+=a.aa;gt.allowable+=a.allowable;gt.reCF+=a.reCF;gt.qeCF+=a.qeCF;}));
     return [['QE C/F',gt.qeCF,'var(--t1)'],['Total IA',gt.ia,'var(--blue3)'],['Total AA',gt.aa,'var(--blue3)'],['Total Allowable',gt.allowable,'var(--green3)'],['RE C/F',gt.reCF,'var(--amber3)']].map(([l,v,c])=>`<div style="background:var(--bg3);border:1px solid var(--line);border-radius:6px;padding:10px;text-align:center"><div style="font-size:9.5px;font-weight:700;color:var(--t3);text-transform:uppercase">${l}</div><div style="font-family:'IBM Plex Mono',monospace;font-size:18px;font-weight:700;color:${c};margin-top:4px">RM ${v.toLocaleString()}</div></div>`).join('');})()}
     </div>
+    ${(()=>{
+      const recon=CA_DB.pdfReconciliation;
+      if(!recon||!recon.grandTotal) return `<div style="margin-top:10px;font-size:10.5px;color:var(--t3)">No source-PDF grand total available to reconcile against — upload the tax computation PDF through Tax Computation upload to enable this check.</div>`;
+      if(recon.reconciled){
+        return `<div style="margin-top:10px;padding:8px 10px;background:rgba(0,184,122,.08);border:1px solid rgba(0,184,122,.3);border-radius:6px;font-size:11px;color:var(--green3)">✓ Reconciled — every column above matches the source PDF's own GRAND TOTAL row exactly.</div>`;
+      }
+      const rows=(recon.mismatches||[]).map(m=>`<tr><td style="padding:3px 8px;color:var(--red3);font-weight:700">${tfEsc(m.column)}</td><td style="padding:3px 8px;text-align:right;font-family:'IBM Plex Mono',monospace">RM ${ncNum(m.expected).toLocaleString('en-MY',{minimumFractionDigits:2})}</td><td style="padding:3px 8px;text-align:right;font-family:'IBM Plex Mono',monospace;color:var(--red3);font-weight:700">RM ${ncNum(m.computed).toLocaleString('en-MY',{minimumFractionDigits:2})}</td><td style="padding:3px 8px;text-align:right;font-family:'IBM Plex Mono',monospace;color:var(--red3)">${ncNum(m.diff)>=0?'+':''}${ncNum(m.diff).toLocaleString('en-MY',{minimumFractionDigits:2})}</td></tr>`).join('');
+      return `<div style="margin-top:10px;padding:8px 10px;background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.35);border-radius:6px">
+        <div style="font-size:11px;color:var(--red3);font-weight:700;margin-bottom:6px">⚠ Does not reconcile to source PDF's GRAND TOTAL row — confirm before finalising</div>
+        <table style="font-size:10.5px;border-collapse:collapse;width:100%"><thead><tr><th style="text-align:left;padding:3px 8px;color:var(--t3)">Column</th><th style="text-align:right;padding:3px 8px;color:var(--t3)">Per PDF</th><th style="text-align:right;padding:3px 8px;color:var(--t3)">Computed</th><th style="text-align:right;padding:3px 8px;color:var(--t3)">Diff</th></tr></thead><tbody>${rows}</tbody></table>
+      </div>`;
+    })()}
   </div>`;
 }
+
 
 // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // PAGE 12 â€” DISPOSAL / BALANCING CHARGE SCHEDULE
@@ -16815,7 +17211,7 @@ function renderCAAddition() {
   }));
   const rows=[...extracted,...ledgerAdds];
   if(!rows.length){
-    el.innerHTML=`<div class="card" style="padding:28px;text-align:center;color:var(--t2)"><div style="font-size:16px;font-weight:800;margin-bottom:8px">${CA_DB.company||'Client'} - No additions loaded</div><div style="font-size:12px;color:var(--t3);margin-bottom:14px">Map fixed asset accounts as Non-Current Asset / CA Review, or import the client's tax computation.</div><button class="btn btn-primary btn-sm" onclick="caImportFromUpload()">Import from Upload</button></div>`;
+    el.innerHTML=`<div class="card" style="padding:28px;text-align:center;color:var(--t2)"><div style="font-size:16px;font-weight:800;margin-bottom:8px">${CA_DB.company||'Client'} - No additions loaded</div><div style="font-size:12px;color:var(--t3);margin-bottom:14px">Map fixed asset accounts as Non-Current Asset / CA Review, or import the client's tax computation.</div><button class="btn btn-primary btn-sm" onclick="caOpenUpload()">Import from Upload</button></div>`;
     return;
   }
   const groups={};
@@ -16854,7 +17250,7 @@ function caEvalCell(v,row){
   if(!/^[\d\s+\-*/().]+$/.test(expr)) return 0;
   try{return Number(Function('"use strict";return ('+expr+')')())||0;}catch(e){return 0;}
 }
-function caDefaultWorkCols(){return ['Category','Particulars','Opening RE B/F','Current Year Additions','Disposals / W/O','IA','AA','RE C/F','Note','Source','CA Type','ACA / Incentive','Approval Ref','Review Status'];}
+function caDefaultWorkCols(){return ['Category','Particular','Year','IA Rate %','Original Cost','QE B/F','QE Additions','QE Disposal / Written Off','QE C/F','AA Rate %','RE B/F','RE Additions','RE Disposal / Written Off','Initial','Annual','Allowable','RE C/F','CA Type'];}
 function caAllowanceTypeOptions(){return ['Non-ACA','ACA - Accelerated Capital Allowance','Review required'];}
 function caAcaIncentiveOptions(){return ['','ACA - automation equipment','ACA - ICT / computer equipment','ACA - low value asset','ACA - small value asset','ACA - plant and machinery special rate','ACA - approved incentive / pioneer / RA link','Other ACA - approval required'];}
 function caReviewStatusOptions(){return ['review_required','approved','not_applicable','missing_approval'];}
@@ -16873,27 +17269,40 @@ function caRateRuleForText(text){
   return MY_CA_NORMAL_RATE_RULES.find(rule=>rule.pattern.test(t))||null;
 }
 function caRateRuleForLedgerRow(r){return caRateRuleForText((r?.code||'')+' '+(r?.name||'')+' '+(r?.particulars||''));}
-function caRateRuleForWorkRow(row){return caRateRuleForText((caWorkVal(row,'Category')||'')+' '+(caWorkVal(row,'Particulars')||'')+' '+(caWorkVal(row,'Note')||''));}
+function caRateRuleForWorkRow(row){return caRateRuleForText((caWorkVal(row,'Category')||'')+' '+(caWorkVal(row,'Particular')||''));}
 function caFormulaForRate(baseCell,rate){return `=${baseCell}*${(Number(rate)||0)/100}`;}
+// New PDF-matching column positions (1-based, matching the =C.. formula
+// syntax caEvalCell already supports): C4=IA Rate%, C6=QE B/F, C7=QE
+// Additions, C8=QE Disposal, C9=QE C/F, C10=AA Rate%, C11=RE B/F,
+// C12=RE Additions, C13=RE Disposal, C14=Initial, C15=Annual,
+// C16=Allowable, C17=RE C/F.
+// IMPORTANT: caEvalCell reads every cell in the row via ncNum() to build
+// its C-reference table -- it does NOT recursively evaluate formula
+// cells first, so a formula that references another formula cell (e.g.
+// Annual referencing C9 when C9 is itself "=C6+C7-C8") silently reads 0
+// for that reference. Every formula below is therefore fully expanded
+// to reference only literal (non-formula) cells.
+function caFormulaQECF(){return '=C6+C7-C8';}
+function caFormulaInitial(){return '=C7*C4/100';}
+function caFormulaAnnual(){return '=(C6+C7-C8)*C10/100';}
+function caFormulaAllowable(){return '=C7*C4/100+(C6+C7-C8)*C10/100';}
+function caFormulaRECF(){return '=C11+C12-C13-(C7*C4/100+(C6+C7-C8)*C10/100)';}
 function caRateDisclosure(rule){return `${rule.label}: default IA ${rule.ia}%, AA ${rule.aa}% before ACA/Budget review. ${rule.source}`;}
 function caCanReplaceLedgerFormula(value){
   const raw=String(value??'').replace(/\s+/g,'');
-  return raw===''||raw==='0'||/^=C4\*0(?:\.\d+)?$/i.test(raw);
+  return raw===''||raw==='0'||/^=C[47]\*/i.test(raw)||/^=C[79]\*C(4|10)\/100$/i.test(raw);
 }
 function caApplyRateRuleToWorkRow(row,opts={}){
   const rule=opts.rule||caRateRuleForWorkRow(row);
   if(!rule) return false;
-  if(caWorkReviewStatus(row)==='approved'&&!opts.force) return false;
-  const sourceText=String(caWorkVal(row,'Source','')+' '+caWorkVal(row,'Note',''));
+  const sourceText=String(caWorkVal(row,'Category','')+' '+caWorkVal(row,'Particular',''));
   const isCurrentYear=/ledger|current-year|uploaded excel|source row/i.test(sourceText)||opts.force;
   if(!isCurrentYear) return false;
   if(!caWorkVal(row,'Category')||/^(opening|asset|equipment|other equipment)$/i.test(String(caWorkVal(row,'Category')))) caWorkSet(row,'Category',rule.category);
-  if(caCanReplaceLedgerFormula(caWorkVal(row,'IA'))) caWorkSet(row,'IA',caFormulaForRate('C4',rule.ia));
-  if(caCanReplaceLedgerFormula(caWorkVal(row,'AA'))) caWorkSet(row,'AA',caFormulaForRate('C4',rule.aa));
-  const note=String(caWorkVal(row,'Note',''));
-  const disclosure=caRateDisclosure(rule);
-  if(!note.includes(rule.label)) caWorkSet(row,'Note',note?`${note} | ${disclosure}`:disclosure);
-  if(['computer_ict','motor_vehicle','renovation','signboard'].includes(rule.key)) caWorkSet(row,'Review Status','review_required');
+  if(caCanReplaceLedgerFormula(caWorkVal(row,'IA Rate %'))||!caWorkVal(row,'IA Rate %')) caWorkSet(row,'IA Rate %',rule.ia);
+  if(caCanReplaceLedgerFormula(caWorkVal(row,'AA Rate %'))||!caWorkVal(row,'AA Rate %')) caWorkSet(row,'AA Rate %',rule.aa);
+  if(caCanReplaceLedgerFormula(caWorkVal(row,'Initial'))) caWorkSet(row,'Initial',caFormulaInitial());
+  if(caCanReplaceLedgerFormula(caWorkVal(row,'Annual'))) caWorkSet(row,'Annual',caFormulaAnnual());
   return true;
 }
 function caApplyRateLogicToExistingRows(){
@@ -16911,8 +17320,6 @@ function caWorkSet(row,name,value){
   if(idx>=0) row[idx]=value;
 }
 function caWorkType(row){return caWorkVal(row,'CA Type','Non-ACA')||'Non-ACA';}
-function caWorkIncentive(row){return caWorkVal(row,'ACA / Incentive','');}
-function caWorkReviewStatus(row){return caWorkVal(row,'Review Status','review_required')||'review_required';}
 function caSelectHtml(value,options,onchange,wide=false){
   return `<select class="fi" style="${wide?'min-width:210px;':'min-width:120px;'}height:28px;font-size:11px" onchange="${onchange}">${options.map(o=>`<option value="${tfEsc(o)}" ${String(value||'')===String(o)?'selected':''}>${tfEsc(o||'-')}</option>`).join('')}</select>`;
 }
@@ -16921,7 +17328,6 @@ function caWorkfileSetCell(rowIdx,colName,value,rerender=false){
   const row=CA_WORKFILE.rows[Number(rowIdx)];
   if(!row) return;
   caWorkSet(row,colName,value);
-  if(colName==='CA Type'&&String(value).startsWith('ACA')&&!caWorkReviewStatus(row)) caWorkSet(row,'Review Status','review_required');
   tfSaveState();
   if(rerender){renderCAThisYear();renderCAWorkfile();}
 }
@@ -16929,25 +17335,36 @@ function caNormalizeWorkfile(){
   CA_WORKFILE=CA_WORKFILE||{rows:[],cols:caDefaultWorkCols(),attachments:[]};
   CA_WORKFILE.cols=CA_WORKFILE.cols?.length?CA_WORKFILE.cols:caDefaultWorkCols();
   if(CA_WORKFILE.cols[0]!=='Category'){
+    // Unrecognised legacy layout -- start fresh rather than guess.
     const oldRows=CA_WORKFILE.rows||[];
     CA_WORKFILE.cols=caDefaultWorkCols();
-    CA_WORKFILE.rows=oldRows.map(r=>['Opening',r[0]||'',r[1]||0,r[2]||0,r[3]||0,r[4]||0,r[5]||0,r[6]||0,r[7]||'',r[8]||'Migrated','Non-ACA','','','review_required']);
+    CA_WORKFILE.rows=oldRows.map(r=>['Opening',r[0]||'','',20,0,0,0,0,0,10,r[1]||0,r[2]||0,r[3]||0,r[4]||0,r[5]||0,r[6]||0,r[7]||0,'Non-ACA']);
+  }else if(CA_WORKFILE.cols.includes('Opening RE B/F')&&!CA_WORKFILE.cols.includes('Original Cost')){
+    // Migrate the previous PDF-simplified layout (Category, Particulars,
+    // Opening RE B/F, Current Year Additions, Disposals/W-O, IA, AA, RE C/F,
+    // Note, Source, CA Type, ACA/Incentive, Approval Ref, Review Status)
+    // into the new one, which mirrors the PDF's own Capital Allowance
+    // Schedule columns exactly (Particular/Year/IA%/Original Cost/QE B-F/
+    // Additions/Disposal/C-F/AA%/RE B-F/Additions/Disposal/Initial/Annual/
+    // Allowable/RE C-F) plus a single CA Type column.
+    const oldRows=CA_WORKFILE.rows||[];
+    CA_WORKFILE.cols=caDefaultWorkCols();
+    CA_WORKFILE.rows=oldRows.map(r=>{
+      const reBF=r[2]||0,reAdd=r[3]||0,reDisp=r[4]||0,ia=r[5],aa=r[6],reCF=r[7]||0,caType=r[10]||'Non-ACA';
+      return ['Opening'===r[0]?r[0]:(r[0]||'Opening'),r[1]||'','',20,(Number(reBF)||0)+(Number(reAdd)||0),reBF,reAdd,reDisp,caFormulaQECF(),10,reBF,reAdd,reDisp,ia||caFormulaInitial(),aa||caFormulaAnnual(),caFormulaAllowable(),reCF||caFormulaRECF(),caType];
+    });
   }
   const defaults=caDefaultWorkCols();
   defaults.forEach(c=>{
     if(!CA_WORKFILE.cols.includes(c)){
       CA_WORKFILE.cols.push(c);
-      CA_WORKFILE.rows=(CA_WORKFILE.rows||[]).map(r=>{
-        const v=c==='CA Type'?'Non-ACA':c==='Review Status'?'review_required':'';
-        return [...(r||[]),v];
-      });
+      CA_WORKFILE.rows=(CA_WORKFILE.rows||[]).map(r=>[...(r||[]),c==='CA Type'?'Non-ACA':'']);
     }
   });
   CA_WORKFILE.rows=(CA_WORKFILE.rows||[]).map(r=>{
     const row=[...(r||[])];
     while(row.length<CA_WORKFILE.cols.length) row.push('');
     if(!caWorkVal(row,'CA Type')) caWorkSet(row,'CA Type','Non-ACA');
-    if(!caWorkVal(row,'Review Status')) caWorkSet(row,'Review Status','review_required');
     return row;
   });
 }
@@ -16996,14 +17413,14 @@ function caPriorAssetForWorkRow(row){
     || assets.find(a=>caSameCategory(a.catName,cat)&&desc&&caNormKey(a.desc).includes(desc));
 }
 function caWorkRowTotalCost(row){
-  const source=String(row?.[9]||'');
-  if(/^Ledger row/i.test(source)) return caEvalCell(row[3],row)-caEvalCell(row[4],row);
+  const own=caEvalCell(caWorkVal(row,'Original Cost'),row);
+  if(own) return own;
   const prior=caPriorAssetForWorkRow(row);
   if(prior){
     const cost=Number(prior.origCost||prior.originalCost||prior.qeCF||prior.qeBF||0);
     if(cost) return cost;
   }
-  return caEvalCell(row[2],row)+caEvalCell(row[3],row)-caEvalCell(row[4],row);
+  return caEvalCell(caWorkVal(row,'RE B/F'),row)+caEvalCell(caWorkVal(row,'RE Additions'),row)-caEvalCell(caWorkVal(row,'RE Disposal / Written Off'),row);
 }
 function caBSAssetCategoryTotals(){
   const totals={};
@@ -17046,20 +17463,51 @@ function caPruneNonAssetLedgerRows(){
   if(pruned>0) addAudit('System','CA','Pruned '+pruned+' non-asset ledger row(s) from FA workfile (P&L accounts blocked)');
   return pruned;
 }
+// Builds one Work File row (new 18-column, PDF-matching layout) from a
+// prior-year asset (as returned by caAllAssets()) -- used for both the
+// initial auto-populate and the manual "Roll over" action. Last year's
+// closing QE C/F and R.E. C/F become this year's opening B/F; this
+// year's own Additions/Disposal/Initial start blank until the user (or
+// the ledger pull) adds to them.
+function caBuildWorkRowFromAsset(a){
+  const qeBF=Number(a.qeCF||a.qeBF||0),reBF=Number(a.reCF||a.reBF||0);
+  const cost=Number(a.origCost||a.originalCost||qeBF||0);
+  const iaRate=Number(a.iaRate||20),aaRate=Number(a.aaRate||10);
+  // Initial/Annual/Allowable/R.E. C/F are computed as static values (not
+  // live formulas) via the app's existing Schedule-3 engine, which
+  // correctly caps Annual Allowance at the remaining R.E. (a plain
+  // =C9*C10/100 formula has no way to express that cap -- it would let
+  // R.E. C/F go negative for an asset that's already fully written down).
+  const calc=caCalculateAssetAllowances({qeBF,qeAdd:0,qeDisp:0,reBF,reDisp:0,iaRateOverride:iaRate/100,aaRateOverride:aaRate/100});
+  return [a.catName||'Opening',a.desc||'Asset','',iaRate,cost,
+    qeBF,0,0,caFormulaQECF(),
+    aaRate,reBF,0,0,
+    calc.ia,calc.aa,calc.ia+calc.aa,calc.reCF,
+    'Non-ACA'];
+}
+// Builds one Work File row from a current-year fixed-asset ledger
+// addition -- Original Cost / QE Additions / RE Additions all start at
+// the ledger amount (a brand-new addition has no B/F).
+function caBuildWorkRowFromLedger(r,particular){
+  const amount=Math.abs(Number(r.debit||0)-Number(r.credit||0))||Math.abs(Number(r.amount||0));
+  const rule=caRateRuleForLedgerRow(r);
+  const iaRate=rule?rule.ia:20,aaRate=rule?rule.aa:10;
+  const calc=caCalculateAssetAllowances({qeBF:0,qeAdd:amount,qeDisp:0,reBF:0,reDisp:0,iaRateOverride:iaRate/100,aaRateOverride:aaRate/100});
+  return [caGuessWorkCategory(r),particular,new Date().getFullYear(),iaRate,amount,
+    0,amount,0,caFormulaQECF(),
+    aaRate,0,amount,0,
+    calc.ia,calc.aa,calc.ia+calc.aa,calc.reCF,
+    'Non-ACA'];
+}
 function caAppendLedgerRows(force=false){
   caNormalizeWorkfile();
   caPruneNonAssetLedgerRows();
-  const existing=new Set((CA_WORKFILE.rows||[]).map(r=>String(r[9]||'')+'|'+String(r[1]||'')));
+  const existing=new Set((CA_WORKFILE.rows||[]).map(r=>String(r[1]||'')));
   let added=0;
   caLedgerAssetRows().slice(0,500).forEach(r=>{
-    const source=`Ledger row ${r.sourceRow||''}`.trim();
     const particular=`${r.code} ${r.name} - ${r.particulars}`;
-    const key=source+'|'+particular;
-    if(!force&&existing.has(key)) return;
-    const amount=Math.abs(Number(r.debit||0)-Number(r.credit||0))||Math.abs(Number(r.amount||0));
-    const rule=caRateRuleForLedgerRow(r);
-    const note=rule?`Ledger fixed asset addition - ${caRateDisclosure(rule)}`:'Ledger fixed asset addition - review IA/AA rate and ACA/non-ACA treatment';
-    CA_WORKFILE.rows.push([caGuessWorkCategory(r),particular,0,amount,0,rule?caFormulaForRate('C4',rule.ia):'=C4*0.2',rule?caFormulaForRate('C4',rule.aa):'=C4*0.1','=C3+C4-C5-C6-C7',note,source,'Non-ACA','','','review_required']);
+    if(!force&&existing.has(particular)) return;
+    CA_WORKFILE.rows.push(caBuildWorkRowFromLedger(r,particular));
     added++;
   });
   return added;
@@ -17068,22 +17516,7 @@ function caEnsureWorkfile(){
   caNormalizeWorkfile();
   caPruneNonAssetLedgerRows();
   if(!CA_WORKFILE.rows?.length){
-    CA_WORKFILE.rows=caAllAssets().map(a=>[
-      a.catName||'Opening',
-      a.desc||'Asset',
-      a.reCF||a.reBF||0,
-      0,
-      0,
-      0,
-      `=C3*${Number(a.aaRate||0)/100}`,
-      '=C3+C4-C5-C6-C7',
-      a.note||'Rolled over from last-year uploaded CA schedule',
-      'Prior-year tax computation',
-      'Non-ACA',
-      '',
-      '',
-      'review_required'
-    ]);
+    CA_WORKFILE.rows=caAllAssets().map(a=>caBuildWorkRowFromAsset(a));
   }
   caAppendLedgerRows(false);
   const rateUpdates=caApplyRateLogicToExistingRows();
@@ -17093,7 +17526,7 @@ function caRollAsset(idx){
   const a=caAllAssets()[Number(idx)];
   if(!a) return;
   caEnsureWorkfile();
-  CA_WORKFILE.rows.push([a.catName||'Opening',a.desc||'Asset',a.reCF||a.reBF||0,0,0,0,`=C3*${Number(a.aaRate||0)/100}`,'=C3+C4-C5-C6-C7','Rolled over by user','Prior-year tax computation','Non-ACA','','','review_required']);
+  CA_WORKFILE.rows.push(caBuildWorkRowFromAsset(a));
   tfSaveState();
   renderCAWorkfile();
   switchFATab('workfile',document.querySelector('[data-fa-tab="workfile"]'));
@@ -17101,7 +17534,7 @@ function caRollAsset(idx){
 }
 function caRollAllAssets(){
   CA_WORKFILE={rows:[],cols:caDefaultWorkCols(),attachments:CA_WORKFILE?.attachments||[]};
-  CA_WORKFILE.rows=caAllAssets().map(a=>[a.catName||'Opening',a.desc||'Asset',a.reCF||a.reBF||0,0,0,0,`=C3*${Number(a.aaRate||0)/100}`,'=C3+C4-C5-C6-C7','Rolled over by user','Prior-year tax computation','Non-ACA','','','review_required']);
+  CA_WORKFILE.rows=caAllAssets().map(a=>caBuildWorkRowFromAsset(a));
   caAppendLedgerRows(false);
   tfSaveState();
   renderCAThisYear();
@@ -17112,6 +17545,15 @@ function caRollAllAssets(){
 function renderCALastYear(){
   const el=document.getElementById('fa-tab-lastyear'); if(!el) return;
   const rows=caAllAssets();
+  const statusBanner=(typeof ncCaHpStatusBanner==='function')?ncCaHpStatusBanner():'';
+  // Heuristic: the old text-regex fallback (pre-coordinate-extractor) is
+  // identifiable by its note text, or by a description that swallowed the
+  // whole page header instead of just the asset particular (a tell-tale
+  // sign of that parser losing its column boundaries).
+  const garbledMarkerRe=/Tax File No\.?\s*:|CAPITAL ALLOWANCE SCHEDULE|Qualifying Expenditure|Residual Expenditure|Year of Assessment/i;
+  const looksLikeOldFallback=rows.some(a=>/Parsed from prior-year CA schedule text/i.test(a.note||'')||garbledMarkerRe.test(String(a.desc||'')));
+  const fallbackWarning=looksLikeOldFallback?`<div class="card" style="padding:10px 12px;margin-bottom:12px;background:rgba(239,68,68,.08);border:1px solid rgba(239,68,68,.35);border-radius:8px;font-size:12px;color:var(--red3)">\u26a0 This data looks like it came from the older, less reliable text-scan extractor (row count collapses to one per category, and/or a description field contains a whole page of PDF header text instead of just the asset name) -- not the coordinate-based extractor. Check the CA/HP server status below, then re-upload the tax computation PDF via "Import from Upload" to get the accurate, itemised schedule. Or use "View Source PDF Side-by-Side" below to compare each row against the actual document and correct it by hand.</div>`:'';
+  const pdfToggleBtn=`<button class="btn btn-ghost btn-sm" onclick="caTogglePDFSplit()">${CA_LY_PDF_SPLIT_OPEN?'\u2715 Hide Source PDF':'\ud83d\udcc4 View Source PDF Side-by-Side'}</button>`;
   if(!rows.length){
     // Auto-import if ncExtracted has caSchedule data available
     if(ncExtracted?.taxcomp?.caSchedule?.length && CA_LAST_SYSTEM_LOAD_KEY !== 'current_upload'){
@@ -17119,16 +17561,42 @@ function renderCALastYear(){
       return; // renderFA will be called by caImportFromUpload
     }
     const hasPriorData = ncExtracted?.taxcomp?.caSchedule?.length > 0;
-    el.innerHTML=`<div class="card" style="padding:28px;text-align:center;color:var(--t2)">
+    el.innerHTML=`${statusBanner}<div class="card" style="padding:28px;text-align:center;color:var(--t2)">
       <div style="font-size:16px;font-weight:800;margin-bottom:8px">No last-year upload data loaded</div>
       <div style="font-size:12px;color:var(--t3);margin-bottom:14px">Import the prior-year tax computation to show every CA/HP/FA line for rollover.</div>
       ${hasPriorData?`<button class="btn btn-success btn-sm" onclick="caImportFromUpload()" style="margin-right:8px">✅ Push from New Client Data</button>`:''}
       <button class="btn btn-primary btn-sm" onclick="caOpenUpload()">Import from Upload</button>
     </div>`;return;}
-  el.innerHTML=`<div class="card" style="padding:12px;margin-bottom:12px;display:flex;gap:8px;align-items:center"><div><div style="font-weight:800;color:var(--blue3)">Last Year Uploaded FA / HP / CA</div><div style="font-size:12px;color:var(--t3)">${rows.length} source lines from uploaded tax computation. Click a row to roll it into this year.</div></div><button class="btn btn-primary btn-sm" style="margin-left:auto" onclick="caRollAllAssets()">Roll All to This Year</button></div>
-  <div class="tw"><table class="t"><thead><tr><th>#</th><th>Category</th><th>Asset / Particular</th><th class="r">Cost</th><th class="r">RE C/F</th><th class="r">IA%</th><th class="r">AA%</th><th>Source / Note</th><th>Action</th></tr></thead><tbody>
-  ${rows.map((a,i)=>`<tr onclick="caRollAsset(${i})" style="cursor:pointer"><td>${i+1}</td><td>${tfEsc(a.catName)}</td><td style="font-weight:600;color:var(--blue3)">${tfEsc(a.desc)}</td><td class="r m">${fsMoney(a.origCost||0)}</td><td class="r m">${fsMoney(a.reCF||0)}</td><td class="r">${a.iaRate||0}%</td><td class="r">${a.aaRate||0}%</td><td style="font-size:10px;color:var(--t3)">${tfEsc(a.note||a.source||'Uploaded tax computation')}</td><td><button class="btn btn-primary btn-sm" onclick="event.stopPropagation();caRollAsset(${i})">Roll over</button></td></tr>`).join('')}
-  </tbody></table></div>`;
+  el.innerHTML=`${caPdfStyleHeader('LAST YEAR UPLOADED FA / HP / CA')}${statusBanner}${fallbackWarning}<div class="card" style="padding:12px;margin-bottom:12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap"><div><div style="font-weight:800;color:var(--blue3)">Last Year Uploaded FA / HP / CA</div><div style="font-size:12px;color:var(--t3)">${rows.length} source lines from uploaded tax computation. Click a row to roll it into this year.</div></div><div style="margin-left:auto;display:flex;gap:8px">${pdfToggleBtn}<button class="btn btn-ghost btn-sm" onclick="caOpenUpload()">Re-import from Upload</button><button class="btn btn-ghost btn-sm" style="color:var(--red3)" onclick="caClearCachedOpeningData()" title="If the numbers don't match the source PDF and re-importing doesn't fix it, this wipes any stale locally-cached data for this client">Clear Cache</button><button class="btn btn-primary btn-sm" onclick="caRollAllAssets()">Roll All to This Year</button></div></div>
+  ${CA_LY_PDF_SPLIT_OPEN?caRenderPDFSplitView(rows,garbledMarkerRe):`<div class="tw"><table class="t"><thead><tr><th>#</th><th>Category</th><th>Asset / Particular</th><th class="r">Cost</th><th class="r">RE C/F</th><th class="r">IA%</th><th class="r">AA%</th><th>Source / Note</th><th>Action</th></tr></thead><tbody>
+  ${rows.map((a,i)=>`<tr onclick="caRollAsset(${i})" style="cursor:pointer"><td>${i+1}</td><td>${tfEsc(a.catName)}</td><td style="font-weight:600;color:var(--blue3)">${garbledMarkerRe.test(String(a.desc||''))?`<span style="color:var(--red3)">\u26a0 ${tfEsc(String(a.desc).slice(0,120))}...</span>`:tfEsc(a.desc)}</td><td class="r m">${fsMoney(a.origCost||0)}</td><td class="r m">${fsMoney(a.reCF||0)}</td><td class="r">${a.iaRate||0}%</td><td class="r">${a.aaRate||0}%</td><td style="font-size:10px;color:var(--t3)">${tfEsc(a.note||a.source||'Uploaded tax computation')}</td><td><button class="btn btn-primary btn-sm" onclick="event.stopPropagation();caRollAsset(${i})">Roll over</button></td></tr>`).join('')}
+  </tbody></table></div>`}`;
+}
+let CA_LY_PDF_SPLIT_OPEN=false;
+function caTogglePDFSplit(){
+  CA_LY_PDF_SPLIT_OPEN=!CA_LY_PDF_SPLIT_OPEN;
+  renderCALastYear();
+  if(CA_LY_PDF_SPLIT_OPEN) setTimeout(()=>tcLoadAndShowPDF('ca-ly-pdf-frame'),0);
+}
+// Left = the actual source PDF, rendered page by page. Right = every
+// extracted row, so each one can be checked (and, for anything the
+// automatic extraction couldn't read cleanly -- flagged with the same
+// red \u26a0 as the table view -- corrected by hand) against the real
+// document instead of trusting the parser blindly.
+function caRenderPDFSplitView(rows,garbledMarkerRe){
+  return `<div style="display:grid;grid-template-columns:1fr 1fr;gap:10px;height:70vh;min-height:420px">
+    <div style="background:var(--bg2);border:1px solid var(--line);border-radius:8px;overflow:hidden;display:flex;flex-direction:column">
+      <div style="padding:6px 10px;background:var(--bg3);border-bottom:1px solid var(--line);font-size:11px;font-weight:700;color:var(--t2)">\ud83d\udcc4 Source PDF (Tax Computation)</div>
+      <div id="ca-ly-pdf-frame" style="flex:1;overflow:auto;background:#2b2b2b;padding:10px">
+        <div style="height:100%;display:flex;align-items:center;justify-content:center;text-align:center;color:#c7c7c7;font-size:12px;padding:24px">Loading source PDF from document archive...</div>
+      </div>
+    </div>
+    <div style="background:var(--bg2);border:1px solid var(--line);border-radius:8px;overflow:auto;padding:4px">
+      <table class="t" style="width:100%"><thead><tr><th>#</th><th>Category</th><th>Asset / Particular</th><th class="r">Cost</th><th class="r">RE C/F</th><th>Action</th></tr></thead><tbody>
+      ${rows.map((a,i)=>`<tr onclick="caRollAsset(${i})" style="cursor:pointer"><td>${i+1}</td><td>${tfEsc(a.catName)}</td><td style="font-weight:600;color:var(--blue3);max-width:260px">${garbledMarkerRe.test(String(a.desc||''))?`<span style="color:var(--red3)">\u26a0 ${tfEsc(String(a.desc).slice(0,100))}...</span>`:tfEsc(a.desc)}</td><td class="r m">${fsMoney(a.origCost||0)}</td><td class="r m">${fsMoney(a.reCF||0)}</td><td><button class="btn btn-primary btn-sm" onclick="event.stopPropagation();caRollAsset(${i})">Roll over</button></td></tr>`).join('')}
+      </tbody></table>
+    </div>
+  </div>`;
 }
 function caWorkfileCapture(){
   const table=document.getElementById('ca-workfile-table'); if(!table) return;
@@ -17139,7 +17607,7 @@ function caWorkfileCapture(){
   }));
   tfSaveState();
 }
-function caWorkfileAddLine(at=null){caEnsureWorkfile();const row=Array(CA_WORKFILE.cols.length).fill('');caWorkSet(row,'CA Type','Non-ACA');caWorkSet(row,'Review Status','review_required');if(at==null)CA_WORKFILE.rows.push(row);else CA_WORKFILE.rows.splice(Number(at)+1,0,row);renderCAWorkfile();tfSaveState();}
+function caWorkfileAddLine(at=null){caEnsureWorkfile();const row=Array(CA_WORKFILE.cols.length).fill('');caWorkSet(row,'CA Type','Non-ACA');if(at==null)CA_WORKFILE.rows.push(row);else CA_WORKFILE.rows.splice(Number(at)+1,0,row);renderCAWorkfile();tfSaveState();}
 function caWorkfileDeleteLine(at){caEnsureWorkfile();CA_WORKFILE.rows.splice(Number(at),1);renderCAWorkfile();tfSaveState();}
 function caWorkfileAddColumn(at=null){caEnsureWorkfile();const pos=at==null?CA_WORKFILE.cols.length:Number(at)+1;CA_WORKFILE.cols.splice(pos,0,'New Column');CA_WORKFILE.rows.forEach(r=>r.splice(pos,0,''));renderCAWorkfile();tfSaveState();}
 function caWorkfileDeleteColumn(at){caEnsureWorkfile();if(CA_WORKFILE.cols.length<=1)return;const pos=Number(at);CA_WORKFILE.cols.splice(pos,1);CA_WORKFILE.rows.forEach(r=>r.splice(pos,1));renderCAWorkfile();tfSaveState();}
@@ -17165,19 +17633,20 @@ function renderCAThisYear(){
   const el=document.getElementById('fa-tab-thisyear'); if(!el) return;
   caEnsureWorkfile();
   const rows=CA_WORKFILE.rows||[];
-  const total=(i)=>rows.reduce((s,r)=>s+caEvalCell(r[i],r),0);
+  const val=(r,name)=>caEvalCell(caWorkVal(r,name),r);
+  const total=(name)=>rows.reduce((s,r)=>s+val(r,name),0);
   const totalCost=()=>rows.reduce((s,r)=>s+caWorkRowTotalCost(r),0);
   const groups={};
   rows.forEach(r=>{const k=r[0]||'Uncategorised';groups[k]=groups[k]||[];groups[k].push(r);});
   const bsTotals=caBSAssetCategoryTotals();
-  const groupTotal=(rs,i)=>rs.reduce((s,r)=>s+caEvalCell(r[i],r),0);
+  const groupTotal=(rs,name)=>rs.reduce((s,r)=>s+val(r,name),0);
   const groupCost=(rs)=>rs.reduce((s,r)=>s+caWorkRowTotalCost(r),0);
-  el.innerHTML=`<div class="card" style="padding:12px;margin-bottom:12px;display:flex;gap:8px;align-items:center"><div><div style="font-weight:800;color:var(--blue3)">This Year FA / HP / CA</div><div style="font-size:12px;color:var(--t3)">Opening amounts roll from last-year RE C/F. Current-year fixed asset ledger additions are pushed into this schedule.</div></div><button class="btn btn-ghost btn-sm" style="margin-left:auto" onclick="caAddLedgerToWorkfile();renderCAThisYear()">Pull FA Ledger Items</button><button class="btn btn-primary btn-sm" onclick="switchFATab('workfile',document.querySelector('[data-fa-tab=workfile]'))">Open Work File</button></div>
-  <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:10px;margin-bottom:12px">${[['Total Cost',totalCost()],['Opening RE B/F',total(2)],['Current Year Additions',total(3)],['Disposal / W/O',total(4)],['IA + AA',total(5)+total(6)],['RE C/F',total(7)]].map(([l,v])=>`<div class="card" style="padding:12px;text-align:center"><div style="font-size:10px;font-weight:800;color:var(--t3);text-transform:uppercase">${l}</div><div class="m" style="font-size:18px;font-weight:800;color:var(--blue3)">RM ${fsMoney(v)}</div></div>`).join('')}</div>
-  <div class="tw"><table class="t"><thead><tr><th>Particulars</th><th>ACA / Non-ACA</th><th class="r">Total Cost</th><th class="r">Opening RE B/F</th><th class="r">Current Year Additions</th><th class="r">Disposals / W/O</th><th class="r">IA</th><th class="r">AA</th><th class="r">RE C/F</th><th>Note / Source</th><th>Status</th></tr></thead><tbody>
+  el.innerHTML=`${caPdfStyleHeader('THIS YEAR FA / HP / CA')}<div class="card" style="padding:12px;margin-bottom:12px;display:flex;gap:8px;align-items:center"><div><div style="font-weight:800;color:var(--blue3)">This Year FA / HP / CA</div><div style="font-size:12px;color:var(--t3)">Opening amounts roll from last-year QE/R.E. C/F. Current-year fixed asset ledger additions are pushed into this schedule.</div></div><button class="btn btn-ghost btn-sm" style="margin-left:auto" onclick="caAddLedgerToWorkfile();renderCAThisYear()">Pull FA Ledger Items</button><button class="btn btn-primary btn-sm" onclick="switchFATab('workfile',document.querySelector('[data-fa-tab=workfile]'))">Open Work File</button></div>
+  <div style="display:grid;grid-template-columns:repeat(6,1fr);gap:10px;margin-bottom:12px">${[['Total Cost',totalCost()],['R.E. B/F',total('RE B/F')],['R.E. Additions',total('RE Additions')],['Disposal / W/O',total('RE Disposal / Written Off')],['Initial + Annual',total('Initial')+total('Annual')],['R.E. C/F',total('RE C/F')]].map(([l,v])=>`<div class="card" style="padding:12px;text-align:center"><div style="font-size:10px;font-weight:800;color:var(--t3);text-transform:uppercase">${l}</div><div class="m" style="font-size:18px;font-weight:800;color:var(--blue3)">RM ${fsMoney(v)}</div></div>`).join('')}</div>
+  <div class="tw"><table class="t"><thead><tr><th>Particular</th><th>CA Type</th><th class="r">Total Cost</th><th class="r">R.E. B/F</th><th class="r">R.E. Additions</th><th class="r">Disposals / W/O</th><th class="r">Initial</th><th class="r">Annual</th><th class="r">R.E. C/F</th><th>Status</th></tr></thead><tbody>
   ${Object.entries(groups).map(([cat,rs])=>{
     const c=groupCost(rs), rec=caReconForCategory(cat,c,bsTotals);
-    return `<tr><td colspan="11" style="font-weight:800;color:var(--blue3);background:var(--blue-d)">${tfEsc(cat)}</td></tr>${rs.map(r=>{
+    return `<tr><td colspan="10" style="font-weight:800;color:var(--blue3);background:var(--blue-d)">${tfEsc(cat)}</td></tr>${rs.map(r=>{
       const ri=CA_WORKFILE.rows.indexOf(r);
       const type=caWorkType(r);
       const rule=caRateRuleForWorkRow(r);
@@ -17185,26 +17654,26 @@ function renderCAThisYear(){
         ? `<div style="margin-top:4px;font-size:11px;color:var(--t3)">Sub-class: ${tfEsc(rule.label)} | IA ${rule.ia}% | AA ${rule.aa}%</div>`
         : `<div style="margin-top:4px;font-size:11px;color:var(--red)">Sub-class review required</div>`;
       const categoryNote=r[0]?`<div style="margin-top:4px;font-size:11px;color:var(--t3)">${tfEsc(r[0])}</div>`:'';
-      return `<tr><td>${tfEsc(r[1]||'')}${categoryNote}</td><td>${caSelectHtml(type,caAllowanceTypeOptions(),`caWorkfileSetCell(${ri},'CA Type',this.value,true)`)}${subclass}</td><td class="r m">${fsLineAmount(caWorkRowTotalCost(r))}</td><td class="r m">${fsLineAmount(caEvalCell(r[2],r))}</td><td class="r m">${fsLineAmount(caEvalCell(r[3],r))}</td><td class="r m">${fsLineAmount(caEvalCell(r[4],r))}</td><td class="r m">${fsLineAmount(caEvalCell(r[5],r))}</td><td class="r m">${fsLineAmount(caEvalCell(r[6],r))}</td><td class="r m">${fsLineAmount(caEvalCell(r[7],r))}</td><td style="font-size:11px;color:var(--t3)">${tfEsc((r[8]||'')+' '+(r[9]||''))}${String(type).startsWith('ACA')?`<div style="margin-top:4px">${caSelectHtml(caWorkIncentive(r),caAcaIncentiveOptions(),`caWorkfileSetCell(${ri},'ACA / Incentive',this.value)`,true)}</div>`:''}</td><td><span class="badge ${caWorkReviewStatus(r)==='approved'?'b-green':'b-amber'}">${tfEsc(caWorkReviewStatus(r))}</span></td></tr>`;
-    }).join('')}<tr class="tot"><td>${tfEsc(cat)} total</td><td></td><td class="r m">${fsMoney(c)}</td><td class="r m">${fsMoney(groupTotal(rs,2))}</td><td class="r m">${fsMoney(groupTotal(rs,3))}</td><td class="r m">${fsMoney(groupTotal(rs,4))}</td><td class="r m">${fsMoney(groupTotal(rs,5))}</td><td class="r m">${fsMoney(groupTotal(rs,6))}</td><td class="r m">${fsMoney(groupTotal(rs,7))}</td><td colspan="2"><span class="badge ${rec.ok?'b-green':'b-amber'}">${rec.ok?'Reconciled':'Review'}</span> <span style="font-size:11px;color:var(--t3)">${tfEsc(rec.msg)} · BS cost RM ${fsMoney(rec.bs)}</span></td></tr>`;
+      return `<tr><td>${tfEsc(r[1]||'')}${categoryNote}</td><td>${caSelectHtml(type,caAllowanceTypeOptions(),`caWorkfileSetCell(${ri},'CA Type',this.value,true)`)}${subclass}</td><td class="r m">${fsLineAmount(caWorkRowTotalCost(r))}</td><td class="r m">${fsLineAmount(val(r,'RE B/F'))}</td><td class="r m">${fsLineAmount(val(r,'RE Additions'))}</td><td class="r m">${fsLineAmount(val(r,'RE Disposal / Written Off'))}</td><td class="r m">${fsLineAmount(val(r,'Initial'))}</td><td class="r m">${fsLineAmount(val(r,'Annual'))}</td><td class="r m">${fsLineAmount(val(r,'RE C/F'))}</td><td></td></tr>`;
+    }).join('')}<tr class="tot"><td>${tfEsc(cat)} total</td><td></td><td class="r m">${fsMoney(c)}</td><td class="r m">${fsMoney(groupTotal(rs,'RE B/F'))}</td><td class="r m">${fsMoney(groupTotal(rs,'RE Additions'))}</td><td class="r m">${fsMoney(groupTotal(rs,'RE Disposal / Written Off'))}</td><td class="r m">${fsMoney(groupTotal(rs,'Initial'))}</td><td class="r m">${fsMoney(groupTotal(rs,'Annual'))}</td><td class="r m">${fsMoney(groupTotal(rs,'RE C/F'))}</td><td><span class="badge ${rec.ok?'b-green':'b-amber'}">${rec.ok?'Reconciled':'Review'}</span> <span style="font-size:11px;color:var(--t3)">${tfEsc(rec.msg)} \u00b7 BS cost RM ${fsMoney(rec.bs)}</span></td></tr>`;
   }).join('')}
-  <tr class="tot"><td>Total</td><td></td><td class="r">${fsMoney(totalCost())}</td><td class="r">${fsMoney(total(2))}</td><td class="r">${fsMoney(total(3))}</td><td class="r">${fsMoney(total(4))}</td><td class="r">${fsMoney(total(5))}</td><td class="r">${fsMoney(total(6))}</td><td class="r">${fsMoney(total(7))}</td><td colspan="2"></td></tr>
+  <tr class="tot"><td>Total</td><td></td><td class="r">${fsMoney(totalCost())}</td><td class="r">${fsMoney(total('RE B/F'))}</td><td class="r">${fsMoney(total('RE Additions'))}</td><td class="r">${fsMoney(total('RE Disposal / Written Off'))}</td><td class="r">${fsMoney(total('Initial'))}</td><td class="r">${fsMoney(total('Annual'))}</td><td class="r">${fsMoney(total('RE C/F'))}</td><td></td></tr>
   </tbody></table></div>`;
 }
 function renderCAWorkfile(){
   const el=document.getElementById('fa-tab-workfile'); if(!el) return;
   caEnsureWorkfile();
+  const numericCols=new Set(['Year','IA Rate %','Original Cost','QE B/F','QE Additions','QE Disposal / Written Off','QE C/F','AA Rate %','RE B/F','RE Additions','RE Disposal / Written Off','Initial','Annual','Allowable','RE C/F']);
   const workCell=(r,ri,c,ci)=>{
     if(c==='CA Type') return `<td data-cell data-fixed-cell="${tfEsc(c)}">${caSelectHtml(r[ci]||'Non-ACA',caAllowanceTypeOptions(),`caWorkfileSetCell(${ri},'CA Type',this.value,true)`)}</td>`;
-    if(c==='ACA / Incentive') return `<td data-cell data-fixed-cell="${tfEsc(c)}">${caSelectHtml(r[ci]||'',caAcaIncentiveOptions(),`caWorkfileSetCell(${ri},'ACA / Incentive',this.value)`,true)}</td>`;
-    if(c==='Review Status') return `<td data-cell data-fixed-cell="${tfEsc(c)}">${caSelectHtml(r[ci]||'review_required',caReviewStatusOptions(),`caWorkfileSetCell(${ri},'Review Status',this.value)`)}</td>`;
-    return `<td data-cell contenteditable oninput="caWorkfileCapture()" oncontextmenu="caWorkfileMenu(event,${ri},${ci})" class="${ci>=2&&ci<=7?'r m':''}">${tfEsc(r[ci]??'')}</td>`;
+    return `<td data-cell contenteditable oninput="caWorkfileCapture()" oncontextmenu="caWorkfileMenu(event,${ri},${ci})" class="${numericCols.has(c)?'r m':''}">${tfEsc(r[ci]??'')}</td>`;
   };
-  el.innerHTML=`<div class="card" style="padding:12px;margin-bottom:12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap"><div><div style="font-weight:800;color:var(--blue3)">FA / HP / CA Work File</div><div style="font-size:12px;color:var(--t3)">Editable working sheet. Use formulas such as =C2+C3-C4 or =C3*0.2. Notes and attachment references save locally.</div></div><button class="btn btn-primary btn-sm" style="margin-left:auto" onclick="caWorkfileAddLine()">Add Line</button><button class="btn btn-ghost btn-sm" onclick="caWorkfileAddColumn()">Add Column</button><button class="btn btn-ghost btn-sm" onclick="caAddLedgerToWorkfile()">Add FA/HP/CA Ledger Items</button><button class="btn btn-ghost btn-sm" onclick="document.getElementById('ca-workfile-upload')?.click()">Upload Evidence</button></div>
-  <div class="card" style="padding:10px;margin-bottom:12px;background:var(--amber-d);color:var(--am3);font-size:12px"><b>ACA review control:</b> choose Non-ACA unless the asset qualifies for accelerated capital allowance. ACA items should keep the approval/order reference and remain review_required until the reviewer approves the rate and source.</div>
+  el.innerHTML=`<div class="card" style="padding:12px;margin-bottom:12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap"><div><div style="font-weight:800;color:var(--blue3)">FA / HP / CA Work File</div><div style="font-size:12px;color:var(--t3)">Editable working sheet, matching the tax computation's own Capital Allowance Schedule columns. Use formulas such as =C11+C12-C13-C16 or =C7*C4/100.</div></div><button class="btn btn-primary btn-sm" style="margin-left:auto" onclick="caWorkfileAddLine()">Add Line</button><button class="btn btn-ghost btn-sm" onclick="caWorkfileAddColumn()">Add Column</button><button class="btn btn-ghost btn-sm" onclick="caAddLedgerToWorkfile()">Add FA/HP/CA Ledger Items</button><button class="btn btn-ghost btn-sm" onclick="document.getElementById('ca-workfile-upload')?.click()">Upload Evidence</button></div>
+  <div class="card" style="padding:10px;margin-bottom:12px;background:var(--amber-d);color:var(--am3);font-size:12px"><b>CA Type:</b> choose Non-ACA unless the asset qualifies for Accelerated Capital Allowance.</div>
   <div class="tw"><table class="t" id="ca-workfile-table"><thead><tr>${CA_WORKFILE.cols.map((c,i)=>`<th data-col contenteditable oninput="caWorkfileCapture()" oncontextmenu="caWorkfileMenu(event,0,${i})">${tfEsc(c)}</th>`).join('')}</tr></thead><tbody>${CA_WORKFILE.rows.map((r,ri)=>`<tr data-row="${ri}">${CA_WORKFILE.cols.map((c,ci)=>workCell(r,ri,c,ci)).join('')}</tr>`).join('')}</tbody></table></div>
   <div class="card" style="padding:10px;margin-top:12px"><div style="font-weight:800;font-size:12px;margin-bottom:6px">Saved Evidence / Notes Files</div>${(CA_WORKFILE.attachments||[]).length?(CA_WORKFILE.attachments||[]).map(a=>`<span class="badge b-blue" style="margin-right:6px">${tfEsc(a.name)} (${Math.round((a.size||0)/1024)}KB)</span>`).join(''):'<span style="font-size:12px;color:var(--t3)">No files attached yet.</span>'}</div>`;
 }
+
 
 // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // MAIN renderFA â€” dispatch all tabs
@@ -17242,6 +17711,50 @@ async function renderFA() {
 }
 
 // Action buttons
+// Removes any CA/HP opening-balance records this client has stored in
+// the local IndexedDB archive (caAssets / hpAssets), from any previous
+// session including ones before the coordinate extractor existed. This
+// exists because caLoadOpeningFromSystem() falls back to that archive
+// whenever it can't confidently match in-memory data to the active
+// client -- which can silently resurrect old, wrong, or partial data
+// (e.g. a handful of ledger-sourced rows from an old test) even when a
+// fresh, correct extraction is sitting in memory. Use this whenever the
+// numbers on screen don't match the source PDF and re-importing doesn't
+// fix it -- it forces a guaranteed-clean slate.
+async function caClearCachedOpeningData(){
+  const tin=tfCleanTin(currentClient?.tin);
+  if(!tin){showNotif('error','Clear cache','No client TIN available');return;}
+  if(!confirm('This permanently deletes all CA/HP opening-balance records stored locally for this client (from any previous session) and clears the current screen. You will need to re-import the tax computation afterwards. Continue?')) return;
+  try{
+    let deleted=0;
+    for(const store of ['caAssets','hpAssets']){
+      // These stores only index tin_ya and categoryName, not a bare
+      // 'tin' -- fetch everything and filter in JS so this correctly
+      // catches every year of assessment ever saved for this client,
+      // not just the currently active one.
+      const allRows=await cdbGetAll(store,null,null);
+      const rows=(allRows||[]).filter(r=>tfCleanTin(r.tin)===tin);
+      for(const r of rows){ await cdbDeleteKey(store,r.id); deleted++; }
+    }
+    CA_LAST_SYSTEM_LOAD_KEY='';
+    caClearSchedules(currentClient?.name||'Client',tin,currentYA?.ya||CA_DB.ya);
+    CA_WORKFILE={rows:[],cols:caDefaultWorkCols(),attachments:[]};
+    await renderFA();
+    showNotif('success','Cache cleared',`Removed ${deleted} cached record(s) for this client. Re-import the tax computation to load fresh data.`);
+    addAudit('User','CA','Cleared '+deleted+' cached FA/HP/CA opening-balance record(s) for TIN '+tin);
+  }catch(e){
+    showNotif('error','Clear cache failed',e.message||String(e));
+  }
+}
+// Shared header banner matching the "Summary of Capital Allowance" tab's
+// look (company name, tax file, year of assessment) -- applied at the
+// top of every FA/HP/CA tab for consistent branding/format.
+function caPdfStyleHeader(subtitle){
+  return `<div style="background:var(--bg3);border:1px solid var(--line);border-bottom:none;border-radius:8px 8px 0 0;padding:12px 16px">
+    <div style="font-family:'IBM Plex Serif',serif;font-size:15px;font-weight:700">${tfEsc(CA_DB.company||'Client')} \u2014 ${tfEsc(subtitle)}</div>
+    <div style="font-size:11px;color:var(--t3);font-family:'IBM Plex Mono',monospace;margin-top:3px">Tax File: ${tfEsc(CA_DB.tin||'-')} &nbsp;\u00b7&nbsp; Year of Assessment ${tfEsc(CA_DB.ya||'-')}</div>
+  </div>`;
+}
 function caOpenUpload(){
   const inp=document.getElementById('ca-upload-taxcomp');
   if(inp){inp.value='';inp.click();return;}
