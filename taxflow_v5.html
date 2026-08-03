@@ -18368,6 +18368,12 @@ const LedgerModule = (function() {
   function updateCls(sel,code){ const r=tbData.find(x=>x.code===code); if(r){r.classification=sel.value;r.confirmed=true;r.aiSuggested=false;sel.classList.add('mapped');sel.classList.remove('ai');} }
   function updatePL(sel,code){ const r=tbData.find(x=>x.code===code); if(r){r.plCategory=sel.value;r.confirmed=true;} }
   function filterTB(){ renderTB(); }
+  function printTB(){
+    document.body.classList.add('tb-printing');
+    const cleanup=()=>document.body.classList.remove('tb-printing');
+    window.addEventListener('afterprint',cleanup,{once:true});
+    setTimeout(()=>{window.print();setTimeout(cleanup,1000);},50);
+  }
   function exportTB(){
     if(typeof XLSX==='undefined'){lN('error','âŒ','XLSX not loaded');return;}
     const wb=XLSX.utils.book_new();
@@ -18556,7 +18562,7 @@ const LedgerModule = (function() {
     if(bb){const newBb=bb.cloneNode(true);bb.parentNode.replaceChild(newBb,bb);newBb.addEventListener('click',stepBack);}
     updateBotInfo();
   }
-  return {goStep,stepNext,stepBack,handleDrop,handleFileInput,filterExcel,downloadPDF,downloadExcel,renderTB,filterTB,exportTB,updateCls,updatePL,confirmLedger,renderFS,confirmFS,addAJE,exportFS,renderMapping,updateMap,confirmMapRow,confirmAllMapping,runAIMapping,renderDMPanel,dmDragStart,dmDragEnd,renderWP,wpDrop,postToWP,init,
+  return {goStep,stepNext,stepBack,handleDrop,handleFileInput,filterExcel,downloadPDF,downloadExcel,renderTB,filterTB,exportTB,printTB,updateCls,updatePL,confirmLedger,renderFS,confirmFS,addAJE,exportFS,renderMapping,updateMap,confirmMapRow,confirmAllMapping,runAIMapping,renderDMPanel,dmDragStart,dmDragEnd,renderWP,wpDrop,postToWP,init,
     toggleTheme(){const h=document.documentElement,next=h.getAttribute('data-theme')==='dark'?'light':'dark';h.setAttribute('data-theme',next);try{localStorage.setItem('taxflow_theme',next);}catch(e){}const t=$$('tic');if(t)t.textContent=next==='dark'?'â˜€ï¸':'ðŸŒ™';}
   };
 })();
@@ -19088,7 +19094,27 @@ table.xtbl .tot-row td{background:var(--bld)!important;font-weight:700;border-to
  #ledger-overlay .tbl-wrap{overflow-x:auto;border:1px solid var(--ln);border-radius:7px;}
 table.tbl{width:100%;border-collapse:collapse;font-size:12px;}
 table.tbl th{background:var(--bg3);color:var(--t3);padding:7px 10px;text-align:left;border-bottom:1px solid var(--ln);font-size:10px;text-transform:uppercase;letter-spacing:.4px;font-weight:700;white-space:nowrap;position:sticky;top:0;z-index:5;box-shadow:0 1px 0 var(--ln);}
-table.tbl td{padding:7px 10px;border-bottom:1px solid rgba(28,47,72,.25);vertical-align:middle;}
+table.tbl td{padding:5px 10px;border-bottom:1px solid rgba(28,47,72,.25);vertical-align:middle;font-size:12px;}
+@media print{
+  body:not(.tb-printing) #ledger-overlay{display:none!important;}
+  body.tb-printing{overflow:visible!important;}
+  body.tb-printing > *:not(#ledger-overlay){display:none!important;}
+  body.tb-printing #ledger-overlay{position:static!important;background:#fff!important;display:block!important;}
+  body.tb-printing #ledger-overlay .hdr,
+  body.tb-printing #ledger-overlay .steps,
+  body.tb-printing #ledger-overlay .view:not(#view-4),
+  body.tb-printing #view-4 > div:first-child{display:none!important;}
+  @page{size:A4 landscape;margin:10mm;}
+  body.tb-printing #ledger-overlay .app{display:block!important;height:auto!important;}
+  body.tb-printing #view-4{display:block!important;}
+  body.tb-printing #view-4 > div:last-child{overflow:visible!important;height:auto!important;}
+  body.tb-printing #tb-table-wrap{overflow:visible!important;}
+  body.tb-printing table.tbl{font-size:9px;width:100%;}
+  body.tb-printing table.tbl th{position:static!important;background:#eee!important;color:#000!important;}
+  body.tb-printing table.tbl td{padding:2px 6px;color:#000!important;}
+  body.tb-printing table.tbl thead{display:table-header-group;}
+  body.tb-printing table.tbl tr{page-break-inside:avoid;}
+}
 table.tbl tr:hover td{background:var(--bld);cursor:pointer;}
 table.tbl .r{text-align:right;font-family:'IBM Plex Mono',monospace;font-size:11px;}
 table.tbl .m{font-family:'IBM Plex Mono',monospace;font-size:11px;}
@@ -19283,6 +19309,7 @@ table.tbl .bal td{background:var(--bld)!important;font-weight:700;}
           <option value="dr">Debit balance</option>
           <option value="cr">Credit balance</option>
         </select>
+        <button class="btn btn-gh btn-sm" onclick="LedgerModule.printTB()">🖨️ Print</button>
         <button class="btn btn-gh btn-sm" onclick="LedgerModule.exportTB()">📊 Export TB</button>
       </div>
     </div>
