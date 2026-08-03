@@ -1078,6 +1078,7 @@ table.t .tot td{background:var(--bg3)!important;font-weight:700;border-top:1px s
     <div class="tab" data-fa-tab="hp" onclick="switchFATab('hp',this)">HP Creditors</div>
     <div class="tab" data-fa-tab="reconcile" onclick="switchFATab('reconcile',this)">FA Recon</div>
     <div class="tab" data-fa-tab="addition" onclick="switchFATab('addition',this)">âž• Additions</div>
+    <div class="tab" data-fa-tab="unabsorbed" onclick="switchFATab('unabsorbed',this)">Unabsorbed CA</div>
   </div>
   <div class="pb" style="padding:0;overflow:hidden;display:flex;flex-direction:column;flex:1">
     <div id="fa-tab-lastyear" style="display:none;flex:1;overflow-y:auto;padding:16px 18px"></div>
@@ -1089,6 +1090,7 @@ table.t .tot td{background:var(--bg3)!important;font-weight:700;border-top:1px s
     <div id="fa-tab-hp"      style="display:none;flex:1;overflow-y:auto;padding:16px 18px"></div>
     <div id="fa-tab-reconcile" style="display:none;flex:1;overflow-y:auto;padding:16px 18px"></div>
     <div id="fa-tab-addition" style="display:none;flex:1;overflow-y:auto;padding:16px 18px"></div>
+    <div id="fa-tab-unabsorbed" style="display:none;flex:1;overflow-y:auto;padding:16px 18px"></div>
   </div>
 </div>
 
@@ -16585,7 +16587,7 @@ async function caLoadOpeningFromSystem(){
 function switchFATab(id, el) {
   document.querySelectorAll('[data-fa-tab]').forEach(t=>t.classList.remove('active'));
   if(el) el.classList.add('active');
-  ['lastyear','thisyear','workfile','summary','detail','disposal','hp','reconcile','addition'].forEach(t=>{
+  ['lastyear','thisyear','workfile','summary','detail','disposal','hp','reconcile','addition','unabsorbed'].forEach(t=>{
     const el=document.getElementById('fa-tab-'+t);
     if(el) el.style.display = t===id?'':'none';
   });
@@ -17284,7 +17286,103 @@ function renderCAAddition() {
     </table></div>
   </div>`;
 }
-
+// ══════════════════════════════════════════════════════════════════
+// UNABSORBED CAPITAL ALLOWANCE -- tracked per business source, since
+// each business's statutory income and CA position is computed
+// separately under Malaysian tax law. Current-year CA is deemed fully
+// utilised against current-year business income first (s.43 ITA 1967)
+// -- it is never carried forward while current-year income remains
+// positive. Only PRIOR YEARS' brought-forward unabsorbed CA is subject
+// to absorption ordering here, and LHDN practice is first-in-first-out:
+// the oldest year of assessment's balance is absorbed before any more
+// recent year's balance, so a business can never show a later year's
+// balance absorbed while an earlier year's balance still sits unused.
+// ══════════════════════════════════════════════════════════════════
+function caEnsureUnabsorbed(){
+  CA_DB.unabsorbed=CA_DB.unabsorbed||[];
+  CA_DB.unabsorbedAvailable=CA_DB.unabsorbedAvailable||{};
+}
+function caAddUnabsorbedRow(){
+  caEnsureUnabsorbed();
+  const biz=(caBusinessOptions()[0])||'Business 1';
+  CA_DB.unabsorbed.push({business:biz,originYA:(CA_DB.ya||new Date().getFullYear())-1,balanceBF:0,absorbed:0,balanceCF:0});
+  tfSaveState();
+  renderCAUnabsorbed();
+}
+function caDeleteUnabsorbedRow(i){
+  caEnsureUnabsorbed();
+  CA_DB.unabsorbed.splice(i,1);
+  tfSaveState();
+  renderCAUnabsorbed();
+}
+function caUnabsorbedSetCell(i,field,value){
+  caEnsureUnabsorbed();
+  const row=CA_DB.unabsorbed[i];
+  if(!row) return;
+  row[field]=(field==='business')?value:ncNum(value);
+  tfSaveState();
+  renderCAUnabsorbed();
+}
+function caUnabsorbedSetAvailable(biz,value){
+  caEnsureUnabsorbed();
+  CA_DB.unabsorbedAvailable[biz]=ncNum(value);
+  tfSaveState();
+  renderCAUnabsorbed();
+}
+// Runs FIFO absorption for one business: sorts that business's rows by
+// Origin YA ascending (oldest first), then greedily absorbs each row's
+// Balance B/F against the business's "Available Income to Absorb"
+// figure (which should already be net of this year's own CA -- see
+// note above) until either the rows or the income run out.
+function caRunFifoAbsorption(biz){
+  caEnsureUnabsorbed();
+  let remaining=ncNum(CA_DB.unabsorbedAvailable[biz]);
+  const rows=CA_DB.unabsorbed.filter(r=>r.business===biz).sort((a,b)=>Number(a.originYA)-Number(b.originYA));
+  rows.forEach(r=>{
+    const bf=ncNum(r.balanceBF);
+    const absorb=Math.max(0,Math.min(bf,remaining));
+    r.absorbed=absorb;
+    r.balanceCF=Math.max(0,bf-absorb);
+    remaining=Math.max(0,remaining-absorb);
+  });
+  tfSaveState();
+  renderCAUnabsorbed();
+  showNotif('success','FIFO absorption applied',`Absorbed oldest-first against ${biz}'s available income; RM ${fsMoney(remaining)} of that income was not needed / any leftover balances remain carried forward.`);
+}
+function renderCAUnabsorbed(){
+  const el=document.getElementById('fa-tab-unabsorbed'); if(!el) return;
+  caEnsureUnabsorbed();
+  const businesses=caBusinessOptions();
+  const byBiz={};
+  CA_DB.unabsorbed.forEach((r,i)=>{(byBiz[r.business]=byBiz[r.business]||[]).push({...r,idx:i});});
+  el.innerHTML=`${caPdfStyleHeader('UNABSORBED CAPITAL ALLOWANCE')}
+  <div class="card" style="padding:12px;margin-bottom:12px;display:flex;gap:8px;align-items:center;flex-wrap:wrap">
+    <div><div style="font-weight:800;color:var(--blue3)">Unabsorbed Capital Allowance</div><div style="font-size:12px;color:var(--t3)">Tracked per business source. Current-year CA is fully absorbed against current-year income first (S.43 ITA 1967) -- only prior years' brought-forward balances are ordered here, oldest year first (FIFO).</div></div>
+    <button class="btn btn-primary btn-sm" style="margin-left:auto" onclick="caAddUnabsorbedRow()">Add Balance B/F Row</button>
+  </div>
+  ${businesses.map(biz=>{
+    const rows=(byBiz[biz]||[]).sort((a,b)=>Number(a.originYA)-Number(b.originYA));
+    if(!rows.length) return '';
+    const totalBF=rows.reduce((s,r)=>s+ncNum(r.balanceBF),0);
+    const totalAbsorbed=rows.reduce((s,r)=>s+ncNum(r.absorbed),0);
+    const totalCF=rows.reduce((s,r)=>s+ncNum(r.balanceCF),0);
+    return `<div class="card" style="margin-bottom:14px;overflow:hidden;padding:0">
+      <div style="background:var(--blue-d);padding:10px 14px;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:8px">
+        <div style="font-weight:700;color:var(--blue3)">${tfEsc(biz)}</div>
+        <div style="display:flex;align-items:center;gap:8px;font-size:12px">
+          <label style="color:var(--t3)">Available income to absorb against (net of this year's own CA):</label>
+          <input class="fi" type="number" step="0.01" value="${ncNum(CA_DB.unabsorbedAvailable[biz]||0)}" style="width:130px" onchange="caUnabsorbedSetAvailable('${tfEsc(biz)}',this.value)">
+          <button class="btn btn-primary btn-sm" onclick="caRunFifoAbsorption('${tfEsc(biz)}')">Run FIFO Absorption</button>
+        </div>
+      </div>
+      <table class="t" style="width:100%"><thead><tr><th>Origin YA</th><th class="r">Balance B/F</th><th class="r">Absorbed This Year</th><th class="r">Balance C/F</th><th></th></tr></thead><tbody>
+      ${rows.map(r=>`<tr><td><input class="fi" type="number" value="${r.originYA}" style="width:80px" onchange="caUnabsorbedSetCell(${r.idx},'originYA',this.value)"></td><td class="r m"><input class="fi r" type="number" step="0.01" value="${r.balanceBF}" style="width:110px;text-align:right" onchange="caUnabsorbedSetCell(${r.idx},'balanceBF',this.value)"></td><td class="r m" style="color:var(--amber3)">${fsMoney(r.absorbed||0)}</td><td class="r m" style="color:${ncNum(r.balanceCF)>0?'var(--red3)':'var(--green3)'};font-weight:700">${fsMoney(r.balanceCF||0)}</td><td><button class="btn btn-ghost btn-sm" style="color:var(--red3)" onclick="caDeleteUnabsorbedRow(${r.idx})">Delete</button></td></tr>`).join('')}
+      <tr class="tot"><td>Total</td><td class="r m">${fsMoney(totalBF)}</td><td class="r m">${fsMoney(totalAbsorbed)}</td><td class="r m">${fsMoney(totalCF)}</td><td></td></tr>
+      </tbody></table>
+    </div>`;
+  }).join('')||`<div class="card" style="padding:28px;text-align:center;color:var(--t2)"><div style="font-size:14px">No unabsorbed CA balances recorded yet.</div><div style="font-size:12px;color:var(--t3);margin-top:6px">Enter each business's prior-year "Unabsorbed Capital Allowance Carried Forward" figure from the source tax computation (with its origin year of assessment) to track and FIFO-absorb it here.</div></div>`}
+  <div class="card" style="padding:10px 14px;margin-top:4px;background:var(--amber-d);color:var(--am3);font-size:11px">S.43 note: current-year capital allowance is always deducted from current-year business income before any brought-forward unabsorbed CA -- it cannot be carried forward while this year's income is sufficient to absorb it. The FIFO rule above only governs the order multiple prior years' balances are absorbed once current-year CA has already been applied.</div>`;
+}
 function caAllAssets(){
   return (CA_DB.detail||[]).flatMap(cat=>(cat.assets||[]).map(a=>({...a,catName:cat.catName,catId:cat.catId})));
 }
@@ -17302,7 +17400,7 @@ function caDefaultWorkCols(){return ['Category','Particular','Business','Year','
 // for ledger business allocation, so "Business" here means the same
 // thing it does everywhere else in the app.
 function caBusinessOptions(){return (typeof wpBusinessList==='function'?wpBusinessList():[{key:'biz1',label:'Business 1'},{key:'biz2',label:'Business 2'},{key:'biz3',label:'Business 3'}]).map(b=>b.label);}
-function caAllowanceTypeOptions(){return ['Non-ACA','ACA - Accelerated Capital Allowance','Review required'];}
+function caAllowanceTypeOptions(){return ['Non-ACA','ACA - Accelerated Capital Allowance','Industrial Building Allowance','Capital Allowance - Controlled Transfer','Capital Assets Expensed Off','Reinvestment Allowance (Schedule 7A)','Pioneer Status / Investment Tax Allowance','Review required'];}
 function caAcaIncentiveOptions(){return ['','ACA - automation equipment','ACA - ICT / computer equipment','ACA - low value asset','ACA - small value asset','ACA - plant and machinery special rate','ACA - approved incentive / pioneer / RA link','Other ACA - approval required'];}
 function caReviewStatusOptions(){return ['review_required','approved','not_applicable','missing_approval'];}
 const MY_CA_NORMAL_RATE_RULES=[
@@ -17795,6 +17893,7 @@ async function renderFA() {
   renderCAHP();
   renderCAReconcile();
   renderCAAddition();
+  renderCAUnabsorbed();
 }
 
 // Action buttons
