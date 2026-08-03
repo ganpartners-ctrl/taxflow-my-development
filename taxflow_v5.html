@@ -15276,11 +15276,49 @@ function ncPopulateCAFromExtracted(data){
     CA_DB.detail=Object.values(catMap);
     caRebuildSummary();
     CA_DB.disposal=caRowsToDisposal(data.caSchedule,data.disposals||[]);
-    CA_DB.hp=(data.hpAssets||CA_DB.hp||[]).map(h=>({...h,desc:h.desc||h.description,note:h.note||'',taxTreatment:h.taxTreatment||'HP interest review; principal capital/add-back review'}));
+    CA_DB.hp=ncBuildCADBHireePurchase(data);
     CA_DB.importReviewFlags=data.reviewFlags||[];
     CA_DB.pdfReconciliation=data.caReconciliation||null;
     addAudit('AI','CA','CA_DB: '+sourceCaRows.length+' assets for '+CA_DB.company+' with '+(data.reviewFlags||[]).length+' review flags');
-  }else{CA_DB.detail=[];CA_DB.summary=[];ncShowAIStatus('âš ï¸ No CA schedule found â€” enter assets manually in FA module');}
+  }else{CA_DB.detail=[];CA_DB.summary=[];ncShowAIStatus('\u26a0\ufe0f No CA schedule found \u2014 enter assets manually in FA module');}
+}
+// Builds the HP Creditors tab's data shape (renderCAHP expects desc,
+// assetType, origCost, qe, deposit, monthlyInst, totalInst, interest,
+// finalInst, principal, restricted, payments[], balBF, pymt23, balCF).
+// Prefers the detailed coordinate-extracted HP schedule (which has the
+// year-by-year payments and finance terms) over data.hpAssets, which is
+// a lossy summary shape missing exactly those fields -- using the
+// summary shape here previously threw a TypeError partway through
+// rendering and silently blanked every FA/HP/CA tab rendered after it.
+function ncBuildCADBHireePurchase(data){
+  const raw=data?.coordinateHPSchedule?.assets;
+  if(Array.isArray(raw)&&raw.length){
+    const ya=CA_DB.ya||currentYA?.ya||new Date().getFullYear();
+    return raw.map(a=>{
+      const payments=(a.yearlyPayments||[]).map(p=>({yr:p.year,nInst:ncNum(p.noOfInst),principal:ncNum(p.principal),interest:ncNum(p.interest),total:ncNum(p.total)||(ncNum(p.principal)+ncNum(p.interest)),qe:ncNum(p.qe)}));
+      const bf=payments.filter(p=>String(p.yr)!==String(ya)&&Number(p.yr)<Number(ya)).reduce((acc,p)=>({principal:acc.principal+p.principal,interest:acc.interest+p.interest}),{principal:0,interest:0});
+      const thisYear=payments.find(p=>String(p.yr)===String(ya))||{principal:0,interest:0,nInst:0};
+      const totalPaidPrincipal=payments.reduce((s,p)=>s+p.principal,0);
+      const totalPaidInterest=payments.reduce((s,p)=>s+p.interest,0);
+      const principal=ncNum(a.principalAmount);
+      const interest=ncNum(a.interestAmount);
+      const vehicleLabel={'private-new':'Motor Vehicle - Private - New','private-used':'Motor Vehicle - Private - Used','commercial':'Commercial Vehicle'}[a.vehicleType]||'Asset';
+      return{
+        desc:a.description||'HP asset',assetType:vehicleLabel,
+        origCost:ncNum(a.originalCost),qe:ncNum(a.qualifyAmount),
+        deposit:ncNum(a.depositAmount),monthlyInst:ncNum(a.monthlyInstalment),
+        totalInst:ncNum(a.totalInstalments),interest,finalInst:ncNum(a.finalInstalment),
+        principal,restricted:(ncNum(a.originalCost)>ncNum(a.qualifyAmount))?ncNum(a.qualifyAmount):0,
+        payments,
+        balBF:bf,
+        pymt23:{principal:thisYear.principal,interest:thisYear.interest,nInst:thisYear.nInst},
+        balCF:{principal:Math.max(0,principal-totalPaidPrincipal),interest:Math.max(0,interest-totalPaidInterest)},
+        note:a.reconciled?'':'Payment years shown do not yet total the stated Principal/Interest -- loan not fully repaid as at this YA is expected here.',
+        taxTreatment:'HP interest review; principal capital/add-back review'
+      };
+    });
+  }
+  return CA_DB.hp||[];
 }
 
 function guessCategory(desc){
@@ -16511,7 +16549,15 @@ async function caLoadOpeningFromSystem(){
       usedKey=`${tin}_all`;
     }
     if(!caRows.length){
-      if(currentClient){
+      // Only clear if CA_DB's current data genuinely belongs to a
+      // DIFFERENT client -- an empty IndexedDB archive is not evidence
+      // that in-memory CA_DB (which may hold a just-completed, not-yet
+      // re-queryable extraction) is wrong. Wiping it here was silently
+      // blanking every FA/HP/CA tab rendered after this point whenever
+      // renderFA() ran a second time for the same, correct client.
+      const currentDbTin=tfCleanTin(CA_DB.tin);
+      const belongsToDifferentClient=CA_DB.detail?.length&&currentDbTin&&currentDbTin!=='UNKNOWN'&&tin&&tin!=='UNKNOWN'&&currentDbTin!==tin;
+      if(currentClient&&belongsToDifferentClient){
         caClearSchedules(currentClient.name||'Client',tin,targetYA);
         CA_LAST_SYSTEM_LOAD_KEY=`${tin}_${targetYA}_empty`;
       }
