@@ -2001,7 +2001,20 @@ function tfInferLedgerYear(state){
 }
 function tfStatementYear(){return TF_LEDGER_YEAR||tfInferLedgerYear()||currentYA?.ya||new Date().getFullYear();}
 function tfLoadLearning(){try{TF_CODE_LEARNING=JSON.parse(localStorage.getItem(TF_CODE_LEARN_KEY)||'{}')||{};}catch(e){TF_CODE_LEARNING={};}try{TF_SCHEDULE_LEARNING=JSON.parse(localStorage.getItem(TF_SCHEDULE_LEARN_KEY)||'{}')||{};}catch(e){TF_SCHEDULE_LEARNING={};}}
-function tfSaveLearning(){try{localStorage.setItem(TF_CODE_LEARN_KEY,JSON.stringify(TF_CODE_LEARNING));}catch(e){}try{localStorage.setItem(TF_SCHEDULE_LEARN_KEY,JSON.stringify(TF_SCHEDULE_LEARNING));}catch(e){}}
+let TF_SAVE_LEARNING_TIMER=null;
+function tfSaveLearning(){
+  // Called once per account during any full re-classification pass
+  // (potentially hundreds of times in a tight loop) -- writing to
+  // localStorage synchronously on every single call was a real source
+  // of noticeable UI lag/hangs. Debounced so many rapid calls collapse
+  // into one actual write shortly after the burst ends.
+  if(TF_SAVE_LEARNING_TIMER) clearTimeout(TF_SAVE_LEARNING_TIMER);
+  TF_SAVE_LEARNING_TIMER=setTimeout(()=>{
+    try{localStorage.setItem(TF_CODE_LEARN_KEY,JSON.stringify(TF_CODE_LEARNING));}catch(e){}
+    try{localStorage.setItem(TF_SCHEDULE_LEARN_KEY,JSON.stringify(TF_SCHEDULE_LEARNING));}catch(e){}
+    TF_SAVE_LEARNING_TIMER=null;
+  },250);
+}
 function tfEsc(v){return String(v??'').replace(/[&<>"']/g,c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));}
 function mapNorm(v){return String(v||'').toLowerCase().replace(/[^a-z0-9]+/g,' ').trim();}
 function mapLearnProfile(){
@@ -10743,11 +10756,33 @@ function learnedCodeClass(code,bal){
 // decides whether the account is presented as asset or liability. This remains
 // a client-specific heuristic and is marked for review unless learned patterns
 // from confirmed mappings override it above.
+// Classifies an account primarily by its CODE'S LEADING DIGIT RANGE --
+// this is the client's actual chart-of-accounts structure (e.g. every
+// code starting with 3 is a Current Asset family, every code starting
+// with 4 is a Liability family, with 400 specifically being Trade and
+// the rest of the 40x family being Other), not a name-keyword guess.
+// DR/CR balance is used only as a SECONDARY signal: to pick the right
+// side when an account sits in a family that can legitimately swing
+// either way (e.g. a debtor account that happens to carry a credit
+// balance becomes an "other creditor" for balance sheet purposes, and
+// vice versa) -- it does not override a clear code-range match.
+//
+// NOTE: the exact ranges below (300s=Current Asset, 400s=Liability,
+// 400 vs other-40x=Trade vs Other) are what's been confirmed. Extend
+// FIRST_DIGIT_CLASS_MAP below as more of this client's numbering
+// convention is confirmed (e.g. which leading digit means Fixed
+// Asset, Equity, Revenue, Expense) rather than guessing.
+const FIRST_DIGIT_CLASS_MAP={
+  // digit: [side-dr classification, side-cr classification]
+  '3':['Current Asset','Current Liability'],
+  '4':['Current Asset','Current Liability']
+};
 function taxAgentCodePrefixClass(code,bal){
   const raw=String(code||'').trim().toUpperCase();
   const m=raw.match(/^(\d{3})/);
   if(!m) return null;
   const p3=m[1];
+  const firstDigit=p3.charAt(0);
   const side=Number(bal)>0.005?'dr':Number(bal)<-0.005?'cr':'';
   const normalSide=side||'normal';
   const make=(classification,schedule,reason,confidence=.88)=>({
@@ -10759,25 +10794,48 @@ function taxAgentCodePrefixClass(code,bal){
     reason:reason+' Balance side used: '+normalSide.toUpperCase()+'. Confirm this matches the client chart of accounts.',
     wp:false
   });
+  // Specific, well-understood sub-families within the 3xx (debtor) and
+  // 4xx (creditor) ranges -- these decide the SCHEDULE label (Trade vs
+  // Other) once the broad classification is already known from the
+  // leading digit below.
   const tradeDebtorPrefixes=['300'];
   const otherDebtorPrefixes=['305','310'];
   const tradeCreditorPrefixes=['400'];
   const otherCreditorPrefixes=['405','410','430','440'];
   if(tradeDebtorPrefixes.includes(p3)){
-    if(side==='cr') return make('Current Liability','Other Creditors','Code '+p3+'- is a trade debtor family but has a credit closing balance, so it is treated as an other creditor / credit-balance debtor.',.9);
-    return make('Current Asset','Trade Debtors','Code '+p3+'- is the trade debtor family.',.92);
+    if(side==='cr') return make('Current Liability','Other Creditors','Code '+p3+' is a trade debtor family but has a credit closing balance, so it is treated as an other creditor / credit-balance debtor.',.9);
+    return make('Current Asset','Trade Debtors','Code '+p3+' is the trade debtor family.',.92);
   }
   if(otherDebtorPrefixes.includes(p3)){
-    if(side==='cr') return make('Current Liability','Other Creditors','Code '+p3+'- is an other debtor/debtor-family account but has a credit closing balance, so it is treated as other creditor.',.9);
-    return make('Current Asset','Other Debtors','Code '+p3+'- is an other debtor family.',.9);
+    if(side==='cr') return make('Current Liability','Other Creditors','Code '+p3+' is an other debtor/debtor-family account but has a credit closing balance, so it is treated as other creditor.',.9);
+    return make('Current Asset','Other Debtors','Code '+p3+' is an other debtor family.',.9);
   }
   if(tradeCreditorPrefixes.includes(p3)){
-    if(side==='dr') return make('Current Asset','Other Debtors','Code '+p3+'- is a trade creditor family but has a debit closing balance, so it is treated as an other debtor / debit-balance creditor.',.9);
-    return make('Current Liability','Trade Creditors','Code '+p3+'- is the trade creditor family.',.92);
+    if(side==='dr') return make('Current Asset','Other Debtors','Code '+p3+' is a trade creditor family but has a debit closing balance, so it is treated as an other debtor / debit-balance creditor.',.9);
+    return make('Current Liability','Trade Creditors','Code '+p3+' is the trade creditor family.',.92);
   }
   if(otherCreditorPrefixes.includes(p3)){
-    if(side==='dr') return make('Current Asset','Other Debtors','Code '+p3+'- is an other creditor family but has a debit closing balance, so it is treated as other debtor.',.9);
-    return make('Current Liability','Other Creditors','Code '+p3+'- is an other creditor family.',.9);
+    if(side==='dr') return make('Current Asset','Other Debtors','Code '+p3+' is an other creditor family but has a debit closing balance, so it is treated as other debtor.',.9);
+    return make('Current Liability','Other Creditors','Code '+p3+' is an other creditor family.',.9);
+  }
+  // Any OTHER code within a known leading digit's family (e.g. 320,
+  // 350, 415, 460...) that isn't one of the specific sub-families
+  // above -- still classify it broadly from the leading digit rather
+  // than falling through to a name-keyword guess. Within the 4xx
+  // family specifically, treat any not-yet-specific code as "Other
+  // Creditors" per the confirmed convention (400 = Trade, the rest of
+  // 40x = Other) -- this is exactly the case that was previously
+  // falling through to expense-keyword matching.
+  if(FIRST_DIGIT_CLASS_MAP[firstDigit]){
+    const [drCls,crCls]=FIRST_DIGIT_CLASS_MAP[firstDigit];
+    if(firstDigit==='4'){
+      if(side==='dr') return make(drCls,'Other Debtors','Code '+p3+' falls in the 4xx liability family but carries a debit balance, so treated as other debtor.',.75);
+      return make(crCls,'Other Creditors','Code '+p3+' falls in the 4xx liability family (400=Trade Creditors confirmed; remaining 40x=Other Creditors).',.8);
+    }
+    if(firstDigit==='3'){
+      if(side==='cr') return make(crCls,'Other Creditors','Code '+p3+' falls in the 3xx current-asset family but carries a credit balance, so treated as other creditor.',.75);
+      return make(drCls,'Other Debtors','Code '+p3+' falls in the 3xx current-asset family.',.8);
+    }
   }
   return null;
 }
@@ -10936,6 +10994,23 @@ function fsBuildRows(force=false){
   window._fsRows.forEach(r=>{r.classification=fsModelAdjustedClass(r.classification);if(r.schedule) r.schedule=tbCanonicalSubCategory(r.schedule,(r.code||'')+' '+(r.name||''));});
   fsNormalizeBusinessRows(window._fsRows);
   return window._fsRows;
+}
+// fsBuildRows() always prefers an account's EXISTING classification
+// over a freshly computed one -- correct for preserving a user's
+// manual choice, but it also means an account that was wrongly
+// classified once (e.g. before a classification-rule fix) never
+// self-corrects, even on a forced rebuild, until someone changes it by
+// hand. This clears the classification on every row the user hasn't
+// manually confirmed, so the next fsBuildRows(true) call recomputes
+// those from scratch using the current (corrected) rules -- confirmed
+// rows are left untouched.
+function tbForceReclassifyUnconfirmed(){
+  const cleared=(window._fsRows||[]).filter(r=>!r.confirmed);
+  cleared.forEach(r=>{r.classification='';r.schedule='';});
+  fsBuildRows(true);
+  tfSaveState();
+  tfRefreshAllSchedules();
+  if(window.showNotif) showNotif('success','Re-classified',`Recomputed classification for ${cleared.length} unconfirmed account(s) using the current rules. Manually-confirmed accounts were left as-is.`);
 }
 function fsUpdateClass(sel,idx){const r=(window._fsRows||[])[Number(idx)-1];if(r){r.classification=fsModelAdjustedClass(sel.value);r.confirmed=true;
   // The sub-category list depends on the classification -- if the previously
@@ -16659,6 +16734,8 @@ function faInitTabOrder() {
 function renderCASummary() {
   const el = document.getElementById('fa-tab-summary');
   if (!el) return;
+  const panel=document.getElementById('panel-fa');
+  if(panel&&!panel.classList.contains('active')) return;
   if(!CA_DB.summary?.length){
     el.innerHTML=`<div class="card" style="padding:28px;text-align:center;color:var(--t2)">
       <div style="font-size:16px;font-weight:800;margin-bottom:8px">${CA_DB.company||'Client'} - No FA / HP / CA opening balance loaded</div>
@@ -17865,6 +17942,17 @@ function renderCAWorkfile(){
 // MAIN renderFA â€” dispatch all tabs
 // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 async function renderFA() {
+  // tfRefreshAllSchedules() calls this unconditionally on every Trial
+  // Balance classification change, even when the FA/HP/CA screen isn't
+  // the one visible -- doing the full 10-tab rebuild (plus an
+  // IndexedDB round trip and several JSON.stringify calls over
+  // potentially large CA_DB objects) every time was a real cause of
+  // noticeable lag/hangs when editing classifications elsewhere. Since
+  // lazyRender('fa') already calls this exactly when the user navigates
+  // to this panel, it's safe to skip the work otherwise -- it will
+  // simply render fresh next time the panel is actually opened.
+  const panel=document.getElementById('panel-fa');
+  if(panel&&!panel.classList.contains('active')) return;
   await caLoadOpeningFromSystem();
   faInitTabOrder();
   const activeName=String(currentClient?.name||ncExtracted?.formc?.companyName||ncExtracted?.taxcomp?.companyName||'').toUpperCase();
@@ -18279,7 +18367,13 @@ const LedgerModule = (function() {
   }
   function autoClassify(code,name,bal){
     const n=name.toLowerCase();
+    // The client's account-code numbering convention is a stronger,
+    // more reliable signal than guessing from the account name -- when
+    // the code falls in a known family (3xx = current asset side,
+    // 4xx = liability side, per the confirmed convention), that
+    // takes priority over any name-keyword match below.
     const dcHint=taxAgentCodePrefixClass(code,bal);
+    if(dcHint) return dcHint.classification;
     if(n.match(/revenue|sales|service.*income|fee.*income/)) return 'Revenue';
     if(n.match(/interest income|dividend|rental income/)) return 'Other Income';
     if(n.match(/cost of sales|cogs|direct cost/)) return 'Cost of Sales';
@@ -18287,14 +18381,13 @@ const LedgerModule = (function() {
     if(n.match(/depreciation|entertainment|gift|donation|penalty|stamp duty|membership|hp finance|bank charge|insurance|repair|maintenance|rental|utilities|telephone|subscription|training|audit|secretarial|legal|professional|printing|upkeep|medical/)) return 'Operating Expense';
     if(n.match(/interest expense|finance cost|lease interest/)) return 'Non-Operating Expense';
     if(n.match(/cash|bank|fixed deposit/)) return 'Current Asset';
-    if(n.match(/receivable|debtor|prepay|prepaid/)) return dcHint?dcHint.classification:(Number(bal)<0?'Current Liability':'Current Asset');
+    if(n.match(/receivable|debtor|prepay|prepaid/)) return Number(bal)<0?'Current Liability':'Current Asset';
     if(n.match(/fixed asset|property|plant|equipment|right of use|motor vehicle|furniture|renovation/)) return 'Non-Current Asset';
     if(n.match(/long.*deposit|investment|trademark|goodwill/)) return 'Non-Current Asset';
-    if(n.match(/payable|creditor|accrued|tax.*payable|hp.*current|short.*loan/)) return dcHint?dcHint.classification:(Number(bal)>0?'Current Asset':'Current Liability');
+    if(n.match(/payable|creditor|accrued|tax.*payable|hp.*current|short.*loan/)) return Number(bal)>0?'Current Asset':'Current Liability';
     if(n.match(/hp.*non.current|lease.*liab|long.*payable|term loan/)) return 'Non-Current Liability';
     if(n.match(/share capital|paid.up/)) return 'Equity';
     if(n.match(/retained|reserve|profit.*loss/)) return 'Equity';
-    if(dcHint) return dcHint.classification;
     return bal<0?'Revenue':parseFloat(code)>=6000?'Current Asset':'Operating Expense';
   }
   function autoTaxTreatment(code,name){
@@ -18310,7 +18403,26 @@ const LedgerModule = (function() {
     return 'Allowable â€” S.33(1)';
   }
   function buildTBData(){
-    tbData=excelData.map(r=>({...r,classification:autoClassify(r.code,r.name,r.bal),plCategory:'',taxTreatment:autoTaxTreatment(r.code,r.name),confirmed:false,aiSuggested:true}));
+    const prevByCode=new Map((tbData||[]).map(r=>[r.code,r]));
+    tbData=excelData.map(r=>{
+      const prev=prevByCode.get(r.code);
+      // A row the user has manually confirmed keeps their choice across
+      // a rebuild. An unconfirmed (AI-suggested) row is always
+      // recomputed fresh from the current rules -- this is what lets a
+      // classification-logic fix actually take effect for existing
+      // data, instead of a stale AI guess from before the fix sitting
+      // there forever just because tbData was already non-empty.
+      if(prev&&prev.confirmed) return {...r,classification:prev.classification,plCategory:prev.plCategory||'',taxTreatment:prev.taxTreatment||autoTaxTreatment(r.code,r.name),confirmed:true,aiSuggested:false};
+      return {...r,classification:autoClassify(r.code,r.name,r.bal),plCategory:prev?.plCategory||'',taxTreatment:autoTaxTreatment(r.code,r.name),confirmed:false,aiSuggested:true};
+    });
+  }
+  // Explicit re-run, callable any time (not just when tbData happens to
+  // be empty) -- forces every unconfirmed row's classification to be
+  // recomputed against the current rules, leaving confirmed rows alone.
+  function reclassifyUnconfirmed(){
+    buildTBData();
+    renderTB();
+    if(window.showNotif) window.showNotif('success','Re-classified','Unconfirmed accounts recomputed using the current classification rules.');
   }
   function renderTB(){
     if(!tbData.length) buildTBData();
@@ -18562,7 +18674,7 @@ const LedgerModule = (function() {
     if(bb){const newBb=bb.cloneNode(true);bb.parentNode.replaceChild(newBb,bb);newBb.addEventListener('click',stepBack);}
     updateBotInfo();
   }
-  return {goStep,stepNext,stepBack,handleDrop,handleFileInput,filterExcel,downloadPDF,downloadExcel,renderTB,filterTB,exportTB,printTB,updateCls,updatePL,confirmLedger,renderFS,confirmFS,addAJE,exportFS,renderMapping,updateMap,confirmMapRow,confirmAllMapping,runAIMapping,renderDMPanel,dmDragStart,dmDragEnd,renderWP,wpDrop,postToWP,init,
+  return {goStep,stepNext,stepBack,handleDrop,handleFileInput,filterExcel,downloadPDF,downloadExcel,renderTB,filterTB,exportTB,printTB,reclassifyUnconfirmed,updateCls,updatePL,confirmLedger,renderFS,confirmFS,addAJE,exportFS,renderMapping,updateMap,confirmMapRow,confirmAllMapping,runAIMapping,renderDMPanel,dmDragStart,dmDragEnd,renderWP,wpDrop,postToWP,init,
     toggleTheme(){const h=document.documentElement,next=h.getAttribute('data-theme')==='dark'?'light':'dark';h.setAttribute('data-theme',next);try{localStorage.setItem('taxflow_theme',next);}catch(e){}const t=$$('tic');if(t)t.textContent=next==='dark'?'â˜€ï¸':'ðŸŒ™';}
   };
 })();
@@ -19294,6 +19406,7 @@ table.tbl .bal td{background:var(--bld)!important;font-weight:700;}
         <div style="font-size:14px;font-weight:700;font-family:'IBM Plex Serif',serif">Trial Balance</div>
         <div style="font-size:11px;color:var(--t3)" id="tb-balance-status">Generating from ledger data...</div>
         <div style="margin-left:auto;display:flex;gap:8px;flex-shrink:0">
+          <button class="btn btn-gh btn-sm" onclick="LedgerModule.reclassifyUnconfirmed()" title="Recompute classification for unconfirmed accounts using the current rules -- confirmed accounts are left as-is">🔄 Re-classify</button>
           <button class="btn btn-gh btn-sm" onclick="LedgerModule.printTB()">🖨️ Print</button>
           <button class="btn btn-gh btn-sm" onclick="LedgerModule.exportTB()">📊 Export TB</button>
         </div>
