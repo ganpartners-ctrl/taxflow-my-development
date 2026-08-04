@@ -11050,36 +11050,52 @@ function tbForceReclassifyUnconfirmed(){
 function tbResetAllClassifications(){
   const rows=window._fsRows||[];
   if(!confirm(`This clears the classification AND sub-category for ALL ${rows.length} accounts on this Trial Balance (including ones you've manually confirmed, their entries in AI Mapping, and the underlying confirmed ledger rows), wipes this client's learned account-code patterns, then recomputes everything fresh from the current rules. This cannot be undone. Continue?`)) return;
-  const key=tfClientKey();
-  // Reset to an explicit empty structure rather than delete -- some
-  // callers (mapLearnProfile) lazily reconstruct this key with a
-  // different internal shape ({exact:{},prefix:{}}) than others
-  // (learnCodePattern's flat {prefix:{classification:count}}); setting
-  // it explicitly avoids any edge case in how each caller re-creates it.
-  TF_CODE_LEARNING[key]={};
-  TF_SCHEDULE_LEARNING[key]={};
-  tfSaveLearning();
-  rows.forEach(r=>{r.classification='';r.schedule='';r.confirmed=false;});
-  // fsBuildRows() merges classification/schedule back in from
-  // window._fsMappingRows (the separate AI Mapping screen's own saved
-  // data) by matching code/name -- clearing _fsRows alone isn't enough,
-  // that merge would silently resurrect the old values on the very next
-  // rebuild.
-  (window._fsMappingRows||[]).forEach(m=>{m.classification='';m.schedule='';m.confirmed=false;});
-  // mapAllAccounts() (which the AI Mapping screen renders from) builds
-  // its row list from _lgConfirmedRows/lgRows FIRST, before _fsRows --
-  // if those raw ledger rows carry their own classification/schedule
-  // fields from the earlier ledger-confirmation stage, they win over
-  // the freshly-reset Trial Balance data and get written straight back
-  // into _fsMappingRows the next time AI Mapping renders, resurrecting
-  // the exact staleness this reset is meant to clear.
-  [window._lgConfirmedRows,typeof lgRows!=='undefined'?lgRows:null].forEach(arr=>{
-    (arr||[]).forEach(r=>{if(r){r.classification='';r.schedule='';r.confirmed=false;r.taxTreat='';}});
-  });
-  fsBuildRows(true);
-  tfSaveState();
-  tfRefreshAllSchedules();
-  if(window.showNotif) showNotif('success','Reset complete',`Recomputed all ${rows.length} account(s) from scratch using the current rules, and cleared this client's learned patterns.`);
+  try{
+    const key=tfClientKey();
+    // Reset to an explicit empty structure rather than delete -- some
+    // callers (mapLearnProfile) lazily reconstruct this key with a
+    // different internal shape ({exact:{},prefix:{}}) than others
+    // (learnCodePattern's flat {prefix:{classification:count}}); setting
+    // it explicitly avoids any edge case in how each caller re-creates it.
+    TF_CODE_LEARNING[key]={};
+    TF_SCHEDULE_LEARNING[key]={};
+    tfSaveLearning();
+    rows.forEach(r=>{r.classification='';r.schedule='';r.confirmed=false;});
+    // fsBuildRows() merges classification/schedule back in from
+    // window._fsMappingRows (the separate AI Mapping screen's own saved
+    // data) by matching code/name -- clearing _fsRows alone isn't enough,
+    // that merge would silently resurrect the old values on the very next
+    // rebuild.
+    (window._fsMappingRows||[]).forEach(m=>{m.classification='';m.schedule='';m.confirmed=false;});
+    // mapAllAccounts() (which the AI Mapping screen renders from) builds
+    // its row list from _lgConfirmedRows/lgRows FIRST, before _fsRows --
+    // if those raw ledger rows carry their own classification/schedule
+    // fields from the earlier ledger-confirmation stage, they win over
+    // the freshly-reset Trial Balance data and get written straight back
+    // into _fsMappingRows the next time AI Mapping renders, resurrecting
+    // the exact staleness this reset is meant to clear.
+    [window._lgConfirmedRows,typeof lgRows!=='undefined'?lgRows:null].forEach(arr=>{
+      (arr||[]).forEach(r=>{if(r){r.classification='';r.schedule='';r.confirmed=false;r.taxTreat='';}});
+    });
+    fsBuildRows(true);
+    tfSaveState();
+    tfRefreshAllSchedules();
+    // Explicit proof the reset actually worked, instead of leaving it to
+    // a manual scroll-through: count any row that STILL shows the
+    // literal 'P&L' sub-category on a classification where that's wrong
+    // (only Operating Expenses/Revenue/Cost of Sales can legitimately
+    // use a bare 'P&L' label; every balance-sheet classification has its
+    // own proper sub-category list and should never show this).
+    const stillWrong=(window._fsRows||[]).filter(r=>r.schedule==='P&L'&&!['Operating Expenses','Revenue','Cost of Sales','Other Income','Finance Income'].includes(r.classification));
+    if(stillWrong.length){
+      alert(`Reset ran, but ${stillWrong.length} account(s) STILL show 'P&L' on a classification where that's wrong (e.g. ${stillWrong.slice(0,5).map(r=>r.code+' '+r.name).join(', ')}${stillWrong.length>5?', ...':''}). This means there is a 5th data source still holding onto the old value that this reset doesn't yet clear -- please screenshot this exact message and report it, since it narrows down where to look next.`);
+    }else if(window.showNotif){
+      showNotif('success','Reset complete',`Recomputed all ${rows.length} account(s) from scratch using the current rules, and cleared this client's learned patterns. Verified: no balance-sheet row still shows a stale 'P&L' sub-category.`);
+    }
+  }catch(e){
+    alert('Reset failed partway through with an error: '+e.message+'\n\nNothing after this point ran. Please screenshot this message and report it.');
+    console.error('[tbResetAllClassifications]',e);
+  }
 }
 function fsUpdateClass(sel,idx){const r=(window._fsRows||[])[Number(idx)-1];if(r){r.classification=fsModelAdjustedClass(sel.value);r.confirmed=true;
   // The sub-category list depends on the classification -- if the previously
