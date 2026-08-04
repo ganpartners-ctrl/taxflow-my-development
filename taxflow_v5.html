@@ -2031,9 +2031,17 @@ function mapLearnProfile(){
 function mapLearnExactKey(code,name){return String(code||'').trim()+'|'+mapNorm(name);}
 function mapLearnPayload(row,extra={}){
   const map=row?.classification?row:malaysiaAuditAIMap(row?.code,row?.name,row?.bal||row?.amt||0);
-  const schedule=tbCanonicalSubCategory(extra.schedule||row?.schedule||map.schedule||'P&L',(row?.code||'')+' '+(row?.name||''));
+  const classification=extra.classification||row?.classification||map.classification||'Operating Expenses';
+  // A schedule/sub-category must never default to 'P&L' just because
+  // nothing more specific was found -- 'P&L' is meaningless (and was
+  // showing up) on Current Liability / Current Asset / other balance-
+  // sheet rows. Fall back to the classification's OWN first sub-
+  // category option instead, which is always a valid choice for
+  // whatever this account actually is.
+  const fallbackSchedule=(tbSubCategoryOptions(classification)[0])||(classification==='Operating Expenses'||classification==='Revenue'||classification==='Cost of Sales'?'P&L':'Review required');
+  const schedule=tbCanonicalSubCategory(extra.schedule||row?.schedule||map.schedule||fallbackSchedule,(row?.code||'')+' '+(row?.name||''));
   return {
-    classification:extra.classification||row?.classification||map.classification||'Operating Expenses',
+    classification,
     treat:extra.treat||row?.taxTreat||row?.treat||map.treat||'Allowable - S.33(1)',
     schedule,
     query:Boolean(extra.query??row?.query??map.query),
@@ -11015,6 +11023,37 @@ function tbForceReclassifyUnconfirmed(){
   tfRefreshAllSchedules();
   if(window.showNotif) showNotif('success','Re-classified',`Recomputed classification for ${cleared.length} unconfirmed account(s) using the current rules. Manually-confirmed accounts were left as-is.`);
 }
+// The "unconfirmed only" reclassify above is safe by design, but it
+// can never fix an account that was manually confirmed (or, more
+// commonly, silently marked confirmed by an earlier bulk-mapping pass)
+// BEFORE a classification-rule fix went in -- that account's wrong
+// classification/schedule sits there forever. This is the thorough
+// version: also clears every client-specific LEARNED pattern (the
+// account-code -> classification/schedule memory this system builds
+// up over time), since a run of earlier, now-corrected mistakes can
+// otherwise keep "confidently" re-teaching itself the same wrong
+// answer even after the underlying rule is fixed. Destructive (loses
+// all manual classification work for this client), so it's gated
+// behind an explicit confirmation.
+function tbResetAllClassifications(){
+  const rows=window._fsRows||[];
+  if(!confirm(`This clears the classification AND sub-category for ALL ${rows.length} accounts on this Trial Balance (including ones you've manually confirmed, and their entries in AI Mapping), wipes this client's learned account-code patterns, then recomputes everything fresh from the current rules. This cannot be undone. Continue?`)) return;
+  const key=tfClientKey();
+  delete TF_CODE_LEARNING[key];
+  delete TF_SCHEDULE_LEARNING[key];
+  tfSaveLearning();
+  rows.forEach(r=>{r.classification='';r.schedule='';r.confirmed=false;});
+  // fsBuildRows() merges classification/schedule back in from
+  // window._fsMappingRows (the separate AI Mapping screen's own saved
+  // data) by matching code/name -- clearing _fsRows alone isn't enough,
+  // that merge would silently resurrect the old values on the very next
+  // rebuild.
+  (window._fsMappingRows||[]).forEach(m=>{m.classification='';m.schedule='';m.confirmed=false;});
+  fsBuildRows(true);
+  tfSaveState();
+  tfRefreshAllSchedules();
+  if(window.showNotif) showNotif('success','Reset complete',`Recomputed all ${rows.length} account(s) from scratch using the current rules, and cleared this client's learned patterns.`);
+}
 function fsUpdateClass(sel,idx){const r=(window._fsRows||[])[Number(idx)-1];if(r){r.classification=fsModelAdjustedClass(sel.value);r.confirmed=true;
   // The sub-category list depends on the classification -- if the previously
   // chosen sub-category doesn't belong to the new classification's list,
@@ -12167,6 +12206,8 @@ function renderFinstmt(){
   <div style="margin-bottom:10px;padding:8px 10px;border:1px solid var(--line);border-radius:6px;background:var(--green-d);font-size:11px;color:var(--green3);font-weight:700">Milestone state is saved locally and will be restored on refresh. Manual TB mappings also train this client's account-code learning profile.</div>
   <div style="display:flex;align-items:center;gap:8px;margin-bottom:10px">
     <input id="tb-filter-input" class="fi" type="text" placeholder="Filter by code, account name, or mapping..." value="${tfEsc(TB_TEXT_FILTER).replace(/"/g,'&quot;')}" style="flex:1;font-size:12px" oninput="fsFilterTBTable(this.value)">
+    <button class="btn btn-ghost btn-sm" onclick="tbForceReclassifyUnconfirmed()" title="Recompute unconfirmed accounts using the current rules">🔄 Re-classify Unconfirmed</button>
+    <button class="btn btn-ghost btn-sm" style="color:var(--red3)" onclick="tbResetAllClassifications()" title="Wipe ALL classification/sub-category (including confirmed) and learned patterns for this client, then recompute from scratch">⚠️ Reset ALL Classifications</button>
     <span id="tb-filter-count" style="font-size:11px;color:var(--t3)"></span>
   </div>
   <div class="tw tb-table-scroll"><table class="t tb-table">
