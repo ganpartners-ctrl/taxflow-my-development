@@ -11049,10 +11049,15 @@ function tbForceReclassifyUnconfirmed(){
 // behind an explicit confirmation.
 function tbResetAllClassifications(){
   const rows=window._fsRows||[];
-  if(!confirm(`This clears the classification AND sub-category for ALL ${rows.length} accounts on this Trial Balance (including ones you've manually confirmed, and their entries in AI Mapping), wipes this client's learned account-code patterns, then recomputes everything fresh from the current rules. This cannot be undone. Continue?`)) return;
+  if(!confirm(`This clears the classification AND sub-category for ALL ${rows.length} accounts on this Trial Balance (including ones you've manually confirmed, their entries in AI Mapping, and the underlying confirmed ledger rows), wipes this client's learned account-code patterns, then recomputes everything fresh from the current rules. This cannot be undone. Continue?`)) return;
   const key=tfClientKey();
-  delete TF_CODE_LEARNING[key];
-  delete TF_SCHEDULE_LEARNING[key];
+  // Reset to an explicit empty structure rather than delete -- some
+  // callers (mapLearnProfile) lazily reconstruct this key with a
+  // different internal shape ({exact:{},prefix:{}}) than others
+  // (learnCodePattern's flat {prefix:{classification:count}}); setting
+  // it explicitly avoids any edge case in how each caller re-creates it.
+  TF_CODE_LEARNING[key]={};
+  TF_SCHEDULE_LEARNING[key]={};
   tfSaveLearning();
   rows.forEach(r=>{r.classification='';r.schedule='';r.confirmed=false;});
   // fsBuildRows() merges classification/schedule back in from
@@ -11061,6 +11066,16 @@ function tbResetAllClassifications(){
   // that merge would silently resurrect the old values on the very next
   // rebuild.
   (window._fsMappingRows||[]).forEach(m=>{m.classification='';m.schedule='';m.confirmed=false;});
+  // mapAllAccounts() (which the AI Mapping screen renders from) builds
+  // its row list from _lgConfirmedRows/lgRows FIRST, before _fsRows --
+  // if those raw ledger rows carry their own classification/schedule
+  // fields from the earlier ledger-confirmation stage, they win over
+  // the freshly-reset Trial Balance data and get written straight back
+  // into _fsMappingRows the next time AI Mapping renders, resurrecting
+  // the exact staleness this reset is meant to clear.
+  [window._lgConfirmedRows,typeof lgRows!=='undefined'?lgRows:null].forEach(arr=>{
+    (arr||[]).forEach(r=>{if(r){r.classification='';r.schedule='';r.confirmed=false;r.taxTreat='';}});
+  });
   fsBuildRows(true);
   tfSaveState();
   tfRefreshAllSchedules();
