@@ -12097,18 +12097,35 @@ function tbClearColumnFilter(col){
 // be looking at. Each call is wrapped individually so a schedule whose tab
 // has never been opened (its DOM doesn't exist yet) can't block the rest
 // from refreshing, and can't turn into an error the user sees.
+let TF_REFRESH_SCHEDULES_RUNNING=false;
+let TF_REFRESH_SCHEDULES_PENDING=false;
 function tfRefreshAllSchedules(){
-  tbSyncLiveFilterState();
-  const safe=(fn)=>{ try{ if(typeof fn==='function') fn(); }catch(e){ console.warn('[tfRefreshAllSchedules]', e); } };
-  safe(renderFinstmt);
-  safe(buildTC);
-  safe(buildTCSchedules);
-  safe(buildTCSchedulesFull);
-  safe(renderAnalysisOfAccount);
-  safe(renderMapping);
-  safe(renderCASummary);
-  safe(renderFA);
-  safe(renderTaxStatus);
+  // Defensive guard: if something downstream (directly or through an
+  // event this triggers) calls this again while it's still running,
+  // that call is deferred instead of stacking on top of the current
+  // one -- prevents any cascading/recursive trigger from compounding
+  // into runaway repeated work.
+  if(TF_REFRESH_SCHEDULES_RUNNING){TF_REFRESH_SCHEDULES_PENDING=true;return;}
+  TF_REFRESH_SCHEDULES_RUNNING=true;
+  try{
+    tbSyncLiveFilterState();
+    const safe=(fn)=>{ try{ if(typeof fn==='function') fn(); }catch(e){ console.warn('[tfRefreshAllSchedules]', e); } };
+    safe(renderFinstmt);
+    safe(buildTC);
+    safe(buildTCSchedules);
+    safe(buildTCSchedulesFull);
+    safe(renderAnalysisOfAccount);
+    safe(renderMapping);
+    safe(renderCASummary);
+    safe(renderFA);
+    safe(renderTaxStatus);
+  }finally{
+    TF_REFRESH_SCHEDULES_RUNNING=false;
+    if(TF_REFRESH_SCHEDULES_PENDING){
+      TF_REFRESH_SCHEDULES_PENDING=false;
+      setTimeout(tfRefreshAllSchedules,0);
+    }
+  }
 }
 function renderFinstmt(){
   tbSyncLiveFilterState();
@@ -18471,7 +18488,7 @@ const LedgerModule = (function() {
       <td onclick="event.stopPropagation()">
         <select class="cls-sel" onchange="LedgerModule.updatePL(this,'${r.code}')">
           <option value="">— Select —</option>
-          ${PL_ALL.map(p=>`<option value="${p}" ${r.plCategory===p?'selected':''}>${p}</option>`).join('')}
+          ${(tbHasSubCategorySetup(r.classification)?tbSubCategoryOptions(r.classification):PL_ALL).map(p=>`<option value="${p}" ${r.plCategory===p?'selected':''}>${p}</option>`).join('')}
         </select>
       </td>
       <td><span class="badge ${r.confirmed?'b-gr':'b-gy'}">${r.confirmed?'✓ Done':'Pending'}</span></td>
@@ -19440,7 +19457,7 @@ table.tbl .bal td{background:var(--bld)!important;font-weight:700;}
               <th class="r">Credit (RM)</th>
               <th class="r">Balance (RM)</th>
               <th style="min-width:180px">Classification <span style="color:var(--am3);font-size:9px">(click to change)</span></th>
-              <th style="min-width:180px">P&L / BS Category</th>
+              <th style="min-width:180px">Sub-Category <span style="color:var(--am3);font-size:9px">(depends on Classification)</span></th>
               <th>Status</th>
             </tr>
           </thead>
