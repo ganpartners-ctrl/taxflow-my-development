@@ -1671,7 +1671,7 @@ const TB_SUBCATEGORY_DEFAULT={
   'Current Asset':['Trade Debtors','Other Debtors','Deposits & Prepayments','Cash and Cash Equivalent','Inventories'],
   'Current Liability':['Trade Creditors','Other Creditors','Provision / Accrual','Provision for Taxation','HP Creditor (Short Term)','Loan (Short Term)'],
   'Non-Current Liability':['HP Creditor (Long Term)','Loan (Long Term)'],
-  'Non-Current Asset':['Investments','Other Non-Current Asset'],
+  'Non-Current Asset':['Investments','Intangible Asset - Software / Licence','Accumulated Amortisation - Software / Licence','Other Non-Current Asset'],
   'Fixed Asset':['Property / Building','Plant & Machinery','Motor Vehicle','Furniture & Fittings','Computer / ICT Equipment','Office Equipment','Renovation','Capital Work in Progress'],
   'Revenue':['Sales / Trading Income','Service Income','Other Operating Revenue'],
   'Cost of Sales':['Direct Material','Direct Labour','Subcontractor','Other Direct Cost'],
@@ -1739,7 +1739,11 @@ function noteRefFor(schedule){
 }
 function tbFixedAssetSubtypeFromText(text){
   const t=String(text||'').toUpperCase();
-  if(/\b(COMPUTER|LAPTOP|NOTEBOOK|SERVER|PRINTER|MONITOR|PROJECTOR|SCANNER|IPHONE|PHONE|TABLET|IPAD|SOFTWARE|ICT|POS|ROUTER|NETWORK|SWITCH|FIREWALL|SSD|RAM|CPU|KEYBOARD|MOUSE|NAS|ACCESS\s*POINT|WIFI|MODEM)\b/.test(t)) return 'Computer / ICT Equipment';
+  if(/\b(SOFTWARE|LICEN[CS]E)\b/.test(t)){
+    if(/\b(ACCUM|ACCUMULATED|AMORTI[ZS]ATION|AMORT\.?)\b/.test(t)) return 'Accumulated Amortisation - Software / Licence';
+    return 'Intangible Asset - Software / Licence';
+  }
+  if(/\b(COMPUTER|LAPTOP|NOTEBOOK|SERVER|PRINTER|MONITOR|PROJECTOR|SCANNER|IPHONE|PHONE|TABLET|IPAD|ICT|POS|ROUTER|NETWORK|SWITCH|FIREWALL|SSD|RAM|CPU|KEYBOARD|MOUSE|NAS|ACCESS\s*POINT|WIFI|MODEM)\b/.test(t)) return 'Computer / ICT Equipment';
   if(/\b(OFFICE\s+EQUIPMENT|PHOTOCOPIER|FAX|TELEPHONE\s+SYSTEM|SAFE|CASH\s+REGISTER|SHREDDER|BINDING\s+MACHINE|LAMINATOR|AIR\s*COND|AIR\s*CONDITIONER|COFFEE\s+MACHINE|REFRIGERATOR)\b/.test(t)) return 'Office Equipment';
   return '';
 }
@@ -1747,11 +1751,62 @@ function tbCanonicalSubCategory(value,contextText=''){
   const raw=String(value||'').trim();
   if(!raw) return '';
   const key=raw.toLowerCase().replace(/\s+/g,' ');
+  const contextual=tbFixedAssetSubtypeFromText((contextText||'')+' '+raw);
+  if(contextual) return contextual;
   if(['computer & office equipment','computer and office equipment','computer / office equipment','computer','computer equipment','computer equipments','computer / ict equipment','computer / ict equipments'].includes(key)){
-    return tbFixedAssetSubtypeFromText(contextText)||'Computer / ICT Equipment';
+    return 'Computer / ICT Equipment';
+  }
+  if(/\b(software|licen[cs]e)\b/i.test(raw)){
+    if(/\b(accum|accumulated|amorti[sz]ation|amort\.?)\b/i.test(raw)) return 'Accumulated Amortisation - Software / Licence';
+    return 'Intangible Asset - Software / Licence';
   }
   if(['office equipment','office equipments'].includes(key)) return 'Office Equipment';
   return raw;
+}
+function tbRowSearchText(row){
+  if(!row) return '';
+  return [row.code,row.accountCode,row.account_code,row.name,row.accountName,row.account,row.description,row.particulars,row.schedule,row.subCategory,row.subcategory,row.classification,row.mapTo,row.fsClass,row.category].filter(Boolean).join(' ');
+}
+function tbRowCodeText(row){
+  return String((row&&(row.code||row.accountCode||row.account_code))||'').toUpperCase().replace(/\s+/g,'');
+}
+function tbHardAccountingClassification(row){
+  const text=tbRowSearchText(row).toUpperCase();
+  const code=tbRowCodeText(row);
+  const hasSoftware=/\b(SOFTWARE|LICENSE|LICENCE)\b/.test(text);
+  const hasAmort=/\b(ACCUM|ACCUMULATED|AMORTISATION|AMORTIZATION|AMORT\.?)\b/.test(text);
+  const clearlyExpense=/\b(EXPENSE|EXPENSES|CHARGE|COST|FEE|SUBSCRIPTION|RENEWAL|MAINTENANCE|SUPPORT)\b/.test(text);
+  const codeLooksNonCurrentAsset=/^2\d{2}[-\s]?/.test(code);
+  if(hasSoftware&&hasAmort) return {classification:'Non-Current Asset',schedule:'Accumulated Amortisation - Software / Licence',reason:'Software accumulated amortisation is a contra intangible asset, not P&L.'};
+  if(hasSoftware&&(!clearlyExpense||codeLooksNonCurrentAsset)) return {classification:'Non-Current Asset',schedule:'Intangible Asset - Software / Licence',reason:'Software/licence balance is an intangible non-current asset, not P&L.'};
+  if(/\b(DEBTOR|DEBTORS|RECEIVABLE|RECEIVABLES)\b/.test(text)&&!/\b(BAD\s+DEBT|IMPAIRMENT|ALLOWANCE|PROVISION)\b/.test(text)){
+    return {classification:'Current Asset',schedule:/^300[-\s]?/.test(code)?'Trade Debtors':'Other Debtors',reason:'Debtor/receivable balance is a current asset.'};
+  }
+  if(/\b(CREDITOR|CREDITORS|PAYABLE|PAYABLES)\b/.test(text)){
+    return {classification:'Current Liability',schedule:/^400[-\s]?/.test(code)?'Trade Creditors':'Other Creditors',reason:'Creditor/payable balance is a current liability.'};
+  }
+  if(/\b(ACCUM|ACCUMULATED)\b/.test(text)&&/\b(DEPRN|DEPRECIATION|DEP\.?|DEPN)\b/.test(text)){
+    return {classification:'Non-Current Asset',schedule:tbFixedAssetSubtypeFromText(text)||'Other Non-Current Asset',reason:'Accumulated depreciation is a contra fixed asset, not P&L.'};
+  }
+  return null;
+}
+function tbApplyHardAccountingClassification(row){
+  const hard=tbHardAccountingClassification(row);
+  if(!hard) return row;
+  const currentClass=String(row.classification||row.mapTo||row.fsClass||row.category||'');
+  const wrongPL=/\b(P&L|PROFIT|LOSS|OPERATING|EXPENSE|EXPENSES|REVENUE|COST|INCOME|FINANCE)\b/i.test(currentClass);
+  if(!row.confirmed||wrongPL||hard.classification!==(row.classification||'')){
+    row.classification=hard.classification;
+    row.mapTo=hard.classification;
+    row.fsClass=hard.classification;
+    row.category=hard.classification;
+    row.schedule=hard.schedule;
+    row.subCategory=hard.schedule;
+    row.subcategory=hard.schedule;
+    row.reason=hard.reason;
+    row.source=row.source||'Auto';
+  }
+  return row;
 }
 function tbCanonicalSubCategoryList(classification,items){
   const seen=new Set(), out=[];
@@ -10297,20 +10352,34 @@ function fsSourceClosingTotals(rows){
     return a;
   },{dr:0,cr:0});
 }
+function fsNormalizeTBRowAccounting(r){
+  if(!r) return r;
+  r.classification=fsModelAdjustedClass(r.classification);
+  const ctx=(r.code||'')+' '+(r.name||'');
+  if(r.schedule) r.schedule=tbCanonicalSubCategory(r.schedule,ctx);
+  if(typeof tbApplyHardAccountingClassification==='function') tbApplyHardAccountingClassification(r);
+  return r;
+}
 function fsSyncRowsFromMappings(rows){
   const maps=window._fsMappingRows||[];
-  if(!rows?.length||!maps.length) return rows||[];
+  if(!rows?.length) return rows||[];
+  if(!maps.length){
+    rows.forEach(fsNormalizeTBRowAccounting);
+    return rows;
+  }
   const exact=new Map(maps.map(m=>[(String(m.code||'')+'|'+String(m.name||'').toLowerCase()),m]));
   const byCode=new Map(maps.map(m=>[String(m.code||''),m]));
   rows.forEach(r=>{
     const m=exact.get(String(r.code||'')+'|'+String(r.name||'').toLowerCase())||byCode.get(String(r.code||''));
-    if(!m) return;
-    const inferred=mapClassFromSchedule(m.schedule);
-    if(m.classification||inferred) r.classification=m.classification||inferred;
-    if(m.treat) r.taxTreat=m.treat;
-    if(m.schedule) r.schedule=m.schedule;
-    r.confirmed=!!m.confirmed||m.src==='USER'||r.confirmed;
-    r.reason=m.reason||r.reason||'Synced from confirmed AI Mapping.';
+    if(m){
+      const inferred=mapClassFromSchedule(m.schedule);
+      if(m.classification||inferred) r.classification=m.classification||inferred;
+      if(m.treat) r.taxTreat=m.treat;
+      if(m.schedule) r.schedule=m.schedule;
+      r.confirmed=!!m.confirmed||m.src==='USER'||r.confirmed;
+      r.reason=m.reason||r.reason||'Synced from confirmed AI Mapping.';
+    }
+    fsNormalizeTBRowAccounting(r);
   });
   return rows;
 }
@@ -10322,12 +10391,12 @@ function fsBuildRows(force=false){
   // triggered from more places (AI Mapping edits, business allocation
   // edits), not just the original ledger-confirmation flow.
   if(!force&&src.length===0&&window._fsRows&&window._fsRows.length>0){
-    fsSyncRowsFromMappings(window._fsRows);window._fsRows.forEach(r=>{r.classification=fsModelAdjustedClass(r.classification);if(r.schedule) r.schedule=tbCanonicalSubCategory(r.schedule,(r.code||'')+' '+(r.name||''));});fsNormalizeBusinessRows(window._fsRows);return window._fsRows;
+    fsSyncRowsFromMappings(window._fsRows);window._fsRows.forEach(fsNormalizeTBRowAccounting);fsNormalizeBusinessRows(window._fsRows);return window._fsRows;
   }
   if(!force&&window._fsRows&&window._fsRows.length===src.length){
     const savedTot=fsTotalDrCr(window._fsRows), srcTot=fsSourceClosingTotals(src);
     const totalsMatch=Math.abs(savedTot.dr-srcTot.dr)<.01&&Math.abs(savedTot.cr-srcTot.cr)<.01;
-    if(totalsMatch){fsSyncRowsFromMappings(window._fsRows);window._fsRows.forEach(r=>{r.classification=fsModelAdjustedClass(r.classification);if(r.schedule) r.schedule=tbCanonicalSubCategory(r.schedule,(r.code||'')+' '+(r.name||''));});fsNormalizeBusinessRows(window._fsRows);return window._fsRows;}
+    if(totalsMatch){fsSyncRowsFromMappings(window._fsRows);window._fsRows.forEach(fsNormalizeTBRowAccounting);fsNormalizeBusinessRows(window._fsRows);return window._fsRows;}
     console.warn('[TaxFlow] Rebuilding TB rows because saved totals differ from confirmed ledger', {savedTot,srcTot});
     addAudit('System','TB','Rebuilt saved TB rows because totals differed from confirmed ledger source');
   }
@@ -10349,7 +10418,7 @@ function fsBuildRows(force=false){
     return {idx:i+1,code:String(r.code||''),name:String(r.name||''),dr:ty.dr,cr:ty.cr,bal,tyBal:bal,tyDr:ty.dr,tyCr:ty.cr,lyBal,lyDr,lyCr,movementDr,movementCr,classification:fsModelAdjustedClass(old.classification||map.classification),taxTreat:old.taxTreat||map.treat,schedule:tbCanonicalSubCategory(old.schedule||map.schedule,(r.code||'')+' '+(r.name||'')),confidence:old.confidence||map.confidence,query:old.query??map.query,wp:old.wp||map.wp,reason:old.reason||map.reason,confirmed:!!old.confirmed,businessSource:old.businessSource||fsDefaultBusinessSource(r.name),businessManual:!!old.businessManual,rulings:taxRulingsFindMatch(r.name)};
   });
   fsSyncRowsFromMappings(window._fsRows);
-  window._fsRows.forEach(r=>{r.classification=fsModelAdjustedClass(r.classification);if(r.schedule) r.schedule=tbCanonicalSubCategory(r.schedule,(r.code||'')+' '+(r.name||''));});
+  window._fsRows.forEach(fsNormalizeTBRowAccounting);
   fsNormalizeBusinessRows(window._fsRows);
   return window._fsRows;
 }
@@ -14424,8 +14493,9 @@ function ncPopulateCAFromExtracted(data){
 
 function guessCategory(desc){
   const d=desc.toUpperCase();
+  if(d.match(/SOFTWARE|LICEN[CS]E/)) return 'Intangible Asset - Software / Licence';
   if(d.match(/MOTOR\s*VEH|CAR|VAN|LORRY|HONDA|TOYOTA|VOLVO|BMW|ALPHARD/)) return 'Motor Vehicle';
-  if(d.match(/LAPTOP|NOTEBOOK|COMPUTER|PC|MONITOR|PRINTER|SERVER|PROJECTOR|SCANNER|IPHONE|PHONE|TABLET|IPAD|ROUTER|NETWORK|SWITCH|FIREWALL|SSD|RAM|CPU|KEYBOARD|MOUSE|NAS|ACCESS\s*POINT|WIFI|MODEM|SOFTWARE|ICT|POS/)) return 'Computer / ICT Equipment';
+  if(d.match(/LAPTOP|NOTEBOOK|COMPUTER|PC|MONITOR|PRINTER|SERVER|PROJECTOR|SCANNER|IPHONE|PHONE|TABLET|IPAD|ROUTER|NETWORK|SWITCH|FIREWALL|SSD|RAM|CPU|KEYBOARD|MOUSE|NAS|ACCESS\s*POINT|WIFI|MODEM|ICT|POS/)) return 'Computer / ICT Equipment';
   if(d.match(/FURNITURE|CHAIR|TABLE|CABINET|SHELF/)) return 'Furniture and fittings';
   if(d.match(/RENOVATION|PARTITION|CEILING|FLOORING/)) return 'Renovation';
   if(d.match(/OFFICE\s+EQUIPMENT|PHOTOCOPIER|FAX|TELEPHONE\s+SYSTEM|SAFE|CASH\s+REGISTER|SHREDDER|BINDING\s+MACHINE|LAMINATOR|AIR\s*COND|AIR\s*CONDITIONER|COFFEE\s*MACHINE|REFRIGERATOR/)) return 'Office Equipment';
@@ -16332,7 +16402,8 @@ function caAllowanceTypeOptions(){return ['Non-ACA','ACA - Accelerated Capital A
 function caAcaIncentiveOptions(){return ['','ACA - automation equipment','ACA - ICT / computer equipment','ACA - low value asset','ACA - small value asset','ACA - plant and machinery special rate','ACA - approved incentive / pioneer / RA link','Other ACA - approval required'];}
 function caReviewStatusOptions(){return ['review_required','approved','not_applicable','missing_approval'];}
 const MY_CA_NORMAL_RATE_RULES=[
-  {key:'computer_ict',category:'Computer / ICT Equipment',label:'Computer / ICT equipment',ia:20,aa:40,pattern:/\b(computer|laptop|notebook|server|printer|monitor|projector|scanner|iphone|phone|tablet|ipad|software|ict|pos system|router|network|switch|firewall|ssd|ram|cpu|keyboard|mouse|nas|access point|wifi|modem)\b/i,source:'Normal CA reference: computer / ICT assets. Verify YA Budget, ACA or special incentive before approval.',budgetSensitive:true},
+  {key:'software_licence',category:'Intangible Asset - Software / Licence',label:'Software / licence',ia:0,aa:0,pattern:/\b(software|licen[cs]e)\b/i,source:'Review whether software/licence is capital or revenue in nature. Do not group with computer equipment; confirm tax treatment before approval.',budgetSensitive:true},
+  {key:'computer_ict',category:'Computer / ICT Equipment',label:'Computer / ICT equipment',ia:20,aa:40,pattern:/\b(computer|laptop|notebook|server|printer|monitor|projector|scanner|iphone|phone|tablet|ipad|ict|pos system|router|network|switch|firewall|ssd|ram|cpu|keyboard|mouse|nas|access point|wifi|modem)\b/i,source:'Normal CA reference: computer / ICT assets. Verify YA Budget, ACA or special incentive before approval.',budgetSensitive:true},
   {key:'office_equipment',category:'Office Equipment',label:'Office equipment',ia:20,aa:10,pattern:/\b(office equipment|photocopier|fax|telephone system|safe|cash register|shredder|binding machine|laminator|air cond|air conditioner|coffee machine|refrigerator)\b/i,source:'Normal CA reference: office equipment, separate from computer / ICT equipment. Verify YA Budget or ACA before approval.',budgetSensitive:true},
   {key:'furniture_fittings',category:'Furniture and Fittings',label:'Furniture and fittings',ia:20,aa:10,pattern:/\b(furniture|fittings|chair|table|desk|cabinet|partition|pedestal|counter)\b/i,source:'Normal CA reference: furniture and fittings.'},
   {key:'motor_vehicle',category:'Motor Vehicle',label:'Motor vehicle',ia:20,aa:20,pattern:/\b(motor|vehicle|car|lorry|van|truck|volvo|toyota|honda|proton|perodua|alphard)\b/i,source:'Normal CA reference: motor vehicles; qualifying-expenditure cap and private-use review still required.'},
@@ -16366,7 +16437,7 @@ function caApplyRateRuleToWorkRow(row,opts={}){
   const note=String(caWorkVal(row,'Note',''));
   const disclosure=caRateDisclosure(rule);
   if(!note.includes(rule.label)) caWorkSet(row,'Note',note?`${note} | ${disclosure}`:disclosure);
-  if(['computer_ict','motor_vehicle','renovation','signboard'].includes(rule.key)) caWorkSet(row,'Review Status','review_required');
+  if(['software_licence','computer_ict','motor_vehicle','renovation','signboard'].includes(rule.key)) caWorkSet(row,'Review Status','review_required');
   return true;
 }
 function caApplyRateLogicToExistingRows(){
