@@ -1809,7 +1809,7 @@ function taxRulingsFindMatch(name){
 }
 const TB_SUBCATEGORY_DEFAULT={
   'Current Asset':['Trade Debtors','Other Debtors','Deposits & Prepayments','Cash and Cash Equivalent','Inventories'],
-  'Current Liability':['Trade Creditors','Other Creditors','Provision / Accrual','Provision for Taxation','HP Creditor (Short Term)','Loan (Short Term)'],
+  'Current Liability':['Trade Creditors','Other Creditors','Provision / Accrual','Provision for Taxation','Deposit / Advance Received','HP Creditor (Short Term)','Loan (Short Term)'],
   'Non-Current Liability':['HP Creditor (Long Term)','Loan (Long Term)'],
   'Non-Current Asset':['Investments','Other Non-Current Asset'],
   'Fixed Asset':['Property / Building','Plant & Machinery','Motor Vehicle','Furniture & Fittings','Computer / ICT Equipment','Office Equipment','Renovation','Capital Work in Progress'],
@@ -10701,11 +10701,23 @@ function malaysiaAuditAIMap(code,name,bal){
   else if(!n.match(/deposit/)&&!n.match(/\bfee\b|\bincome\b|\brevenue\b/)&&n.match(/maintenance|subscription|rental/)) set(bal>=0?'Operating Expenses':'Revenue',bal>=0?'Allowable - S.33(1)':'Taxable business income - review','P&L '+(bal>=0?'Operating Expenses':'Revenue'),.87,true,'Ambiguous word (maintenance/subscription/rental) can be expense or revenue depending on the business; routed by balance direction -- please confirm.',true);
   else if(n.match(/cash|bank|fixed deposit/)) set('Current Asset','Balance Sheet - Current Asset','Cash and Cash Equivalent',.98,false,'Cash and bank balances mapped to current assets.');
   else if(n.match(/retention sum|contract asset/)) set(bal>=0?'Current Asset':'Current Liability','Construction Retention / Contract Review','Contract Balance Schedule',.88,true,'Retention or contract balances can be asset or liability; confirm with source detail.',true);
-  else if(n.match(/receivable|debtor|prepay|prepaid|deposit/)){
+  // A name that explicitly says "deposit" or "prepay/prepaid" is a
+  // specific, correct signal on its own -- the code-prefix engine below
+  // has no concept of "Deposits & Prepayments" at all (it only ever
+  // resolves to Trade/Other Debtors or Trade/Other Creditors), so
+  // letting it decide the schedule here was silently downgrading a
+  // clearly-named deposit/prepayment account to a generic "Other
+  // Debtors" label. Handled directly instead, before the generic
+  // receivable/debtor branch below gets a chance to defer to the code.
+  else if(n.match(/deposit|prepay|prepaid/)){
+    if(Number(bal)<0) set('Current Liability','Balance Sheet - Current Liability','Deposit / Advance Received',.9,true,'Deposit/prepayment wording has a credit closing balance, so this reads as a deposit or advance RECEIVED from a customer (a liability) rather than paid out; confirm.',true);
+    else set('Current Asset','Balance Sheet - Current Asset','Deposits & Prepayments',.95,false,'Deposit/prepayment wording mapped directly to the Deposits & Prepayments sub-category.');
+  }
+  else if(n.match(/receivable|debtor/)){
     const p=taxAgentCodePrefixClass(code,bal,n);
     if(p) set(p.classification,p.treat,p.schedule,Math.max(.9,p.confidence),p.query,p.reason,p.wp);
     else if(Number(bal)<0) set('Current Liability','Balance Sheet - Current Liability','Other Creditors',.9,true,'Receivable/debtor wording has a credit closing balance; classified as other creditor until auditor confirms.',true);
-    else set('Current Asset','Balance Sheet - Current Asset','BS Current Assets',.94,false,'Receivable/prepayment mapped to current assets.');
+    else set('Current Asset','Balance Sheet - Current Asset','Other Debtors',.94,false,'Receivable wording mapped to current assets.');
   }
   else if(n.match(/fixed asset|property|plant|building|equipment|computer|office equipment|motor vehicle|furniture|renovation|signboard|capital work|trademark|goodwill/)) set('Fixed Asset','CA Review - Schedule 3','Capital Allowance / FA Register',.95,true,'Fixed asset should flow to FA/CA review and capital allowance schedule.',true);
   else if(n.match(/payable|creditor|accrual|accrued|sst|tax payable|short.*loan/)){
