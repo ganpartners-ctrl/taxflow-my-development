@@ -910,7 +910,12 @@ table.t .tot td{background:var(--bg3)!important;font-weight:700;border-top:1px s
 
 <!-- â•â•â•â•â•â•â•â• PANEL: ANALYSIS OF ACCOUNTS â•â•â•â•â•â•â•â• -->
 <div class="panel" id="panel-wp">
-  <div class="ph"><div><div class="ph-title">Analysis of Accounts</div><div class="ph-sub">Tax-sensitive ledger analysis - paid to / paid for / period / tax-act comments</div></div></div>
+  <div class="ph"><div><div class="ph-title">Analysis of Accounts</div><div class="ph-sub">Tax-sensitive ledger analysis - paid to / paid for / period / tax-act comments</div></div>
+    <div style="margin-left:auto;display:flex;gap:8px">
+      <button class="btn btn-ghost btn-sm" onclick="wpExportAllPDF()">🖨 Preview PDF</button>
+      <button class="btn btn-primary btn-sm" onclick="wpExportAllExcel()">📊 Export Excel</button>
+    </div>
+  </div>
   <div id="wp-ledger-ref" style="display:none"></div>
   <div class="pb" id="wpBody"></div>
 </div>
@@ -5619,6 +5624,8 @@ function wpEnsurePresentation(wp){
   wp.manualFinalAmount=wp.manualFinalAmount==null?'':wp.manualFinalAmount;
   wp.manualRowsImported=!!wp.manualRowsImported;
   wp.sourceEvidence=wp.sourceEvidence||[wp.ref,wp.schedule,wp.treatment].filter(Boolean).join(' | ');
+  if(wp.disallowPct==null) wp.disallowPct=wpSuggestDisallowPct(wp,{});
+  wp.disallowPctConfirmed=!!wp.disallowPctConfirmed;
 }
 function wpPresentationOptions(){
   return [
@@ -5776,6 +5783,7 @@ function wpWorkingPaperCard(wp){
         <label style="font-size:10px;color:var(--t3)">Display<select class="fi" onchange="wpSetSummaryMode('${tfEsc(wp.id)}',this.value)" style="display:block;margin-top:4px"><option value="detail" ${wp.summaryMode==='detail'?'selected':''}>Full detail</option><option value="summary" ${wp.summaryMode==='summary'?'selected':''}>Summary by purpose</option></select></label>
         <label style="font-size:10px;color:var(--t3)">Designated schedule<select class="fi" onchange="wpSetDesignatedSchedule('${tfEsc(wp.id)}',this.value)" style="display:block;margin-top:4px;min-width:150px">${wpScheduleOptions(wp).map(s=>`<option value="${tfEsc(s)}" ${wp.designatedSchedule===s?'selected':''}>${tfEsc(s)}</option>`).join('')}</select></label>
         <label style="font-size:10px;color:var(--t3)">Approval status<select class="fi" onchange="wpSetReviewStatus('${tfEsc(wp.id)}',this.value)" style="display:block;margin-top:4px"><option value="draft" ${wp.reviewStatus==='draft'?'selected':''}>Draft</option><option value="review_required" ${wp.reviewStatus==='review_required'?'selected':''}>Review required</option><option value="approved" ${wp.reviewStatus==='approved'?'selected':''}>Approved</option></select></label>
+        <label style="font-size:10px;color:var(--t3)">Disallow % <span style="color:${wp.disallowPctConfirmed?'var(--green3)':'var(--amber3)'}">${wp.disallowPctConfirmed?'✓ confirmed':'AI suggested'}</span><input class="fi" type="number" min="0" max="100" step="0.01" value="${Number(wp.disallowPct||0)}" onchange="wpSetDisallowPct('${tfEsc(wp.id)}',this.value)" style="display:block;margin-top:4px;width:90px"></label>
         <label style="font-size:10px;color:var(--t3)">Approver<input class="fi" value="${tfEsc(wp.approver)}" onchange="wpSetApprover('${tfEsc(wp.id)}',this.value)" style="display:block;margin-top:4px;width:150px" placeholder="Reviewer / partner"></label>
         <button class="btn btn-primary btn-sm" onclick="wpCaptureIfRendered('${tfEsc(wp.id)}');tfSaveState();showNotif('success','Analysis saved','${tfEsc(wp.name)} saved for review')">Save analysis</button>
       </div><div style="font-size:10px;color:var(--t3);margin-top:7px">Source evidence: ${tfEsc(wp.sourceEvidence||wp.ref||'Uploaded ledger')} | Add-back column remains available in every presentation.</div></div>
@@ -5860,6 +5868,24 @@ function wpInferPeriod(line){
   if(m){const y=m[3].length===2?'20'+m[3]:m[3];return `${String(m[2]).padStart(2,'0')}/${y}`;}
   return currentYA?.basisFrom&&currentYA?.basisTo?`${currentYA.basisFrom} to ${currentYA.basisTo}`:'Current basis period';
 }
+function wpSuggestDisallowPct(wp,base){
+  const t=[wp.treatment,wp.schedule,base?.taxComment,base?.particulars].filter(Boolean).join(' ').toLowerCase();
+  if(!/add back|restrict|non.?deductible|disallow/.test(t)) return 0;
+  if(/entertain/.test(t)) return 50;
+  if(/depreciation|capital allowance|amortisation/.test(t)) return 100;
+  if(/penalty|fine|compound/.test(t)) return 100;
+  if(/donation|gift/.test(t)) return 100;
+  if(/private|personal|non.?business/.test(t)) return 100;
+  if(/hp principal|principal repayment/.test(t)) return 100;
+  return 100; // any other explicit "Add Back" treatment defaults to full disallowance until reviewed
+}
+function wpSetDisallowPct(id,val){
+  const wp=WORKING_PAPERS.find(w=>w.id===id); if(!wp) return;
+  const pct=Math.max(0,Math.min(100,Number(val)||0));
+  wp.disallowPct=pct;
+  wp.disallowPctConfirmed=true;
+  tfSaveState();
+}
 function wpLedgerLine(l,wp){
   const debit=Number(l.debit||0), credit=Number(l.credit||0);
   const base={date:l.date||'',ref:l.ref||'',particulars:l.particulars||wp.name,debit,credit,amount:debit-credit,balance:Number(l.balance||0),clientConfirmation:'',internalCheck:'',taxTreatment:wp.treatment||''};
@@ -5871,6 +5897,8 @@ function wpLedgerLine(l,wp){
   base.taxComment=wpStandardReplyFor(wp,base);
   base.userComment='';
   base.queryFlag=/review|required|add back|entertain|donation|director|professional|legal/i.test([wp.treatment,wp.schedule,wp.name].join(' '))?'Required':'Optional';
+  base.disallowPct=wpSuggestDisallowPct(wp,base);
+  base.lineConfirmed=false;
   base._bizAlloc={};
   const list=wpBusinessList();
   if(list[0]) base._bizAlloc[list[0].key]=base.amount;
@@ -5970,6 +5998,102 @@ function wpExportCSV(id){
   const rows=[['Date','Ref','Paid to type','Paid to','ID / Reg / IC','Paid for / purpose','Period covered','Ledger Amount RM',...bizList.map(b=>`${b.label} RM`),'Allocated Total RM','Difference RM','Tax Act comment','User comment','Query'],...(wp.lines||[]).map(l=>{const a=wpEnsureBizAlloc(l);const ledgerAmt=wpLineLedgerAmount(l);const allocTotal=wpBizAllocTotal(l);return [l.date,l.ref,l.paidToType,l.paidTo,l.paidToId,l.paidFor,l.periodCovered,ledgerAmt,...bizList.map(b=>a[b.key]),allocTotal,allocTotal-ledgerAmt,l.taxComment,l.userComment,l.queryFlag];})];
   const csv=rows.map(r=>r.map(x=>`"${String(x??'').replace(/"/g,'""')}"`).join(',')).join('\n');
   const a=document.createElement('a');a.href=URL.createObjectURL(new Blob([csv],{type:'text/csv'}));a.download=`${wp.ref}_${wp.code}_analysis_of_accounts.csv`;a.click();URL.revokeObjectURL(a.href);
+}
+function wpAnalysisReportRows(){
+  // Only include working papers that belong to the Analysis of Accounts workflow
+  // (skips HK schedules etc. added from other modules), in the order posted.
+  return (WORKING_PAPERS||[]).filter(w=>(w.schedule||'')!=='HK Forms');
+}
+function wpAnalysisReportHTML(){
+  const rows=wpAnalysisReportRows();
+  const co=currentClient?.name||'';
+  const tin=currentClient?.tin||'';
+  const ya=currentYA?.ya||'';
+  const bpFrom=currentYA?.basisFrom||'', bpTo=currentYA?.basisTo||'';
+  let grandRM=0, grandDis=0;
+  const sections=rows.map((wp,idx)=>{
+    const lines=wp.lines||[];
+    const total=lines.reduce((s,l)=>s+wpLineLedgerAmount(l),0);
+    const pct=Number(wp.disallowPct||0);
+    const disallow=Math.round(total*pct)/100*100/100; // avoid fp noise
+    const disallowAmt=Math.round((total*pct/100)*100)/100;
+    grandRM+=total; grandDis+=disallowAmt;
+    const lineRows=lines.map(l=>{
+      const amt=wpLineLedgerAmount(l);
+      const desc=tfEsc(l.paidFor||l.particulars||'');
+      const entity=tfEsc(l.paidTo||'');
+      return `<tr><td>${desc}</td><td>${entity}</td><td class="r">${fsLineAmount(amt)}</td><td></td><td></td><td></td></tr>`;
+    }).join('');
+    const notConfirmed=!wp.disallowPctConfirmed;
+    return `<div class="aa-cat">
+      <div class="aa-cat-title">${idx+1}. ${tfEsc(wp.name)}${notConfirmed?' <span class="aa-flag">[disallow % not yet confirmed by preparer]</span>':''}</div>
+      <table class="aa-table"><tbody>${lineRows}
+        <tr class="aa-subtotal"><td colspan="2"></td><td class="r">${fsLineAmount(total)}</td><td class="r">${disallowAmt?fsLineAmount(disallowAmt):''}</td><td class="r">${pct?pct.toFixed(2):''}</td><td>${tfEsc(wp.ref||'')}</td></tr>
+      </tbody></table>
+    </div>`;
+  }).join('');
+  return {html:`<!DOCTYPE html><html><head><meta charset="utf-8"><title>Analysis of Account</title>
+    <style>
+      body{font-family:Arial,Helvetica,sans-serif;font-size:11px;color:#111;margin:32px}
+      h1{font-size:14px;text-align:center;margin:2px 0}
+      .sub{text-align:center;font-size:11px;margin:2px 0}
+      .hdr-row{display:flex;justify-content:space-between;font-size:10px;margin-bottom:10px}
+      .aa-cat{margin-bottom:10px}
+      .aa-cat-title{font-weight:bold;text-decoration:underline;margin:10px 0 3px}
+      .aa-flag{color:#c0392b;font-weight:normal;text-decoration:none;font-size:10px}
+      table.aa-table{width:100%;border-collapse:collapse}
+      table.aa-table td{padding:2px 6px;font-size:11px}
+      table.aa-table td.r{text-align:right;font-variant-numeric:tabular-nums}
+      .aa-subtotal td{border-top:1px solid #333;font-weight:bold}
+      .aa-grand{margin-top:16px;font-weight:bold;font-size:12px;border-top:2px solid #000;padding-top:6px;display:flex;justify-content:space-between}
+      @media print{ body{margin:12mm} }
+    </style></head><body>
+    <h1>${tfEsc(co)}</h1>
+    <div class="sub">ANALYSIS OF ACCOUNT</div>
+    <div class="sub">YEAR OF ASSESSMENT ${tfEsc(ya)}</div>
+    <div class="sub">BASIS PERIOD ${tfEsc(bpFrom)} TO ${tfEsc(bpTo)}</div>
+    <div class="hdr-row"><span>Tax File No.: ${tfEsc(tin)}</span><span>Description | (RM) | Disallowed (RM) | % | Ref</span></div>
+    ${sections||'<div style="padding:20px;color:#888">No accounts posted to Analysis of Accounts yet — go to AI Mapping and click Post Analysis.</div>'}
+    <div class="aa-grand"><span>GRAND TOTAL</span><span>RM ${fsLineAmount(grandRM)} &nbsp;|&nbsp; Disallowed RM ${fsLineAmount(grandDis)}</span></div>
+    </body></html>`, grandRM, grandDis};
+}
+function wpExportAllPDF(){
+  const rows=wpAnalysisReportRows();
+  if(!rows.length){ if(typeof showNotif==='function') showNotif('info','Nothing to preview','Post at least one account to Analysis of Accounts first'); return; }
+  const {html}=wpAnalysisReportHTML();
+  const win=window.open('','_blank');
+  if(!win){ if(typeof showNotif==='function') showNotif('error','Pop-up blocked','Allow pop-ups to preview the PDF'); return; }
+  win.document.open(); win.document.write(html); win.document.close();
+  win.onload=()=>{ win.focus(); win.print(); };
+  addAudit('User','Analysis of Accounts','Opened PDF preview of Analysis of Account ('+rows.length+' accounts)');
+}
+function wpExportAllExcel(){
+  const rows=wpAnalysisReportRows();
+  if(!rows.length){ if(typeof showNotif==='function') showNotif('info','Nothing to export','Post at least one account to Analysis of Accounts first'); return; }
+  if(typeof XLSX==='undefined'){ if(typeof showNotif==='function') showNotif('error','XLSX not loaded','The spreadsheet library failed to load — refresh and try again'); return; }
+  const aoa=[['No.','Description','Ref / Entity','(RM)','Disallowed (RM)','%','Ref']];
+  let grandRM=0, grandDis=0;
+  rows.forEach((wp,idx)=>{
+    aoa.push([`${idx+1}.`,wp.name,'','','','','']);
+    const lines=wp.lines||[];
+    const total=lines.reduce((s,l)=>s+wpLineLedgerAmount(l),0);
+    const pct=Number(wp.disallowPct||0);
+    const disallowAmt=Math.round((total*pct/100)*100)/100;
+    grandRM+=total; grandDis+=disallowAmt;
+    lines.forEach(l=>{
+      aoa.push(['',l.paidFor||l.particulars||'',l.paidTo||'',wpLineLedgerAmount(l),'','','']);
+    });
+    aoa.push(['','','',total,disallowAmt||'',pct||'',wp.ref||'']);
+    aoa.push(['','','','','','','']);
+  });
+  aoa.push(['','GRAND TOTAL','',grandRM,grandDis,'','']);
+  const wb=XLSX.utils.book_new();
+  const ws=XLSX.utils.aoa_to_sheet(aoa);
+  ws['!cols']=[{wch:5},{wch:45},{wch:25},{wch:14},{wch:14},{wch:8},{wch:12}];
+  XLSX.utils.book_append_sheet(wb,ws,'Analysis of Account');
+  XLSX.writeFile(wb,`${(currentClient?.name||'Client').replace(/[^A-Za-z0-9]+/g,'_')}_Analysis_of_Account_YA${currentYA?.ya||''}.xlsx`);
+  addAudit('User','Analysis of Accounts','Exported Analysis of Account to Excel ('+rows.length+' accounts)');
+  if(typeof showNotif==='function') showNotif('success','Exported','Analysis of Account exported to Excel');
 }
 function wpCreateQuery(id){
   wpCapture(id);
@@ -12495,11 +12619,12 @@ function ncSetCardState(type,state){
   const ic=document.getElementById('nc-ic-'+type);
   const st=document.getElementById('nc-st-'+type);
   const card=document.getElementById('nc-card-'+type);
-  const colors={proc:{ic:'var(--blue)',cl:'#fff',stBg:'var(--blue-d)',stCl:'var(--blue3)',stTxt:'Processing...'},done:{ic:'var(--gr)',cl:'#fff',stBg:'var(--green-d)',stCl:'var(--gr3)',stTxt:'âœ“ Done'},idle:{ic:'var(--bg4)',cl:'var(--t3)',stBg:'var(--bg4)',stCl:'var(--t3)',stTxt:'Pending'}};
+  const colors={proc:{ic:'var(--blue)',cl:'#fff',stBg:'var(--blue-d)',stCl:'var(--blue3)',stTxt:'Processing...'},done:{ic:'var(--gr)',cl:'#fff',stBg:'var(--green-d)',stCl:'var(--gr3)',stTxt:'âœ“ Done'},warn:{ic:'var(--amber, #b58900)',cl:'#fff',stBg:'var(--amber-d, #7a5c00)',stCl:'var(--amber3, #ffd966)',stTxt:'âš  Fallback used â€” review'},idle:{ic:'var(--bg4)',cl:'var(--t3)',stBg:'var(--bg4)',stCl:'var(--t3)',stTxt:'Pending'}};
   const s=colors[state]||colors.idle;
-  if(ic){ic.style.background=s.ic;ic.style.color=s.cl;if(state==='done')ic.textContent='âœ“';}
+  if(ic){ic.style.background=s.ic;ic.style.color=s.cl;if(state==='done')ic.textContent='âœ“';if(state==='warn')ic.textContent='!';}
   if(st){st.style.background=s.stBg;st.style.color=s.stCl;st.textContent=s.stTxt;}
   if(card&&state==='done') card.style.borderColor='rgba(0,184,122,.4)';
+  if(card&&state==='warn') card.style.borderColor='rgba(181,137,0,.5)';
 }
 function ncDelay(ms){return new Promise(r=>setTimeout(r,ms));}
 function ncToBase64(file){return new Promise((res,rej)=>{const r=new FileReader();r.onload=e=>res(e.target.result);r.onerror=rej;r.readAsDataURL(file);});}
@@ -12601,10 +12726,19 @@ Extract EVERY individual asset and every director/shareholder/beneficial-owner s
   }
 
   // Complete steps
-  [1,2,3,4].forEach(i=>{const s=document.getElementById('nc-s'+i+'-'+type);if(s){s.className='nc-step done';s.textContent='âœ… '+s.textContent.replace(/^[â¬œðŸ”„âœ…]\s*/,'');}});
-  ncSetCardState(type,'done');
+  // BUGFIX: this used to unconditionally mark every step done/green, even when the
+  // Anthropic API call failed (e.g. 401 outside a context that injects a key) and the
+  // app silently fell back to the local text-regex extractor. That made a failed/degraded
+  // extraction indistinguishable from a real success -- a preparer could see "Done" with a
+  // green check while the underlying data was null/undefined. Surface the real outcome instead.
+  const usedFallback = !!apiError;
+  const stepIcon = usedFallback ? 'âš ' : 'âœ…';
+  const stepClass = usedFallback ? 'nc-step warn' : 'nc-step done';
+  [1,2,3,4].forEach(i=>{const s=document.getElementById('nc-s'+i+'-'+type);if(s){s.className=stepClass;s.textContent=stepIcon+' '+s.textContent.replace(/^[â¬œðŸ”„âœ…âš ]\s*/,'');}});
+  ncSetCardState(type, usedFallback?'warn':'done');
   ncUploaded[type]=true;
   ncExtracted[type]=data;
+  if(usedFallback) console.warn('[TaxFlow] AI extraction failed ('+apiError+') -- used local text-regex fallback for '+type+'. Verify all figures before relying on them.');
 
   // Save to ClientDB
   try{
@@ -12632,9 +12766,10 @@ Extract EVERY individual asset and every director/shareholder/beneficial-owner s
   }
   if(type==='formc') ncFillFormFields(data);
   const rolloverEl=document.getElementById('rolloverData');if(rolloverEl&&rolloverEl.offsetParent!==null)buildRolloverData();
-  if(type==='formc'&&ncUploaded.taxcomp) ncShowAIStatus('âœ… Both documents extracted â€” click Next â†’');
-  else if(type==='formc') ncShowAIStatus('âœ… Form C extracted Â· '+(data.companyName||'?')+' Â· Now upload Tax Computation â†’');
-  else ncShowAIStatus('âœ… Tax Computation extracted Â· '+(data.caSchedule?.length||0)+' CA assets Â· '+(data.addBacks?.length||0)+' add-backs');
+  const fallbackNote = usedFallback ? ' (AI unavailable â€” used local extraction, review all figures) ' : ' ';
+  if(type==='formc'&&ncUploaded.taxcomp) ncShowAIStatus((usedFallback?'âš ':'âœ…')+' Both documents extracted'+fallbackNote+'â€” click Next â†’');
+  else if(type==='formc') ncShowAIStatus((usedFallback?'âš ':'âœ…')+' Form C extracted'+fallbackNote+'Â· '+(data.companyName||'?')+' Â· Now upload Tax Computation â†’');
+  else ncShowAIStatus((usedFallback?'âš ':'âœ…')+' Tax Computation extracted'+fallbackNote+'Â· '+(data.caSchedule?.length||0)+' CA assets Â· '+(data.hpAssets?.length||0)+' HP assets Â· '+(data.addBacks?.length||0)+' add-backs');
 }
 
 // Smart fallback extraction
@@ -12657,9 +12792,36 @@ async function ncExtractPDFText(file){
       for(let p=1;p<=pdf.numPages;p++){
         const page=await pdf.getPage(p);
         const txt=await page.getTextContent();
-        pages.push(txt.items.map(i=>i.str||'').join(' '));
+        // BUGFIX: previously joined every text item on the page with a single space in
+        // whatever order pdf.js returned them, which is NOT guaranteed to be left-to-right
+        // reading order (PDF content streams commonly draw a numeric column before the row
+        // label it belongs to). That produced garbage like "5,628Advertisement" and every
+        // downstream regex-based table parser (add-backs, CA schedule, HP schedule,
+        // disposals) matched nothing. Group items into lines by y-position, THEN sort each
+        // line left-to-right by x before joining, and preserve column gaps so 2+-space
+        // column detection still works downstream.
+        const lineGroups=[];
+        for(const item of txt.items){
+          const tr=item.transform||[1,0,0,1,0,0];
+          const x=tr[4],y=tr[5];
+          let grp=lineGroups.find(g=>Math.abs(g.y-y)<=2);
+          if(!grp){grp={y,items:[]};lineGroups.push(grp);}
+          grp.items.push({x,w:item.width||0,str:item.str||''});
+        }
+        lineGroups.sort((a,b)=>b.y-a.y);
+        const lines=lineGroups.map(g=>{
+          g.items.sort((a,b)=>a.x-b.x);
+          let out='',lastX=null,lastW=0;
+          for(const it of g.items){
+            if(lastX===null){out+=it.str;}
+            else{const gap=it.x-(lastX+lastW);out+=(gap>4?'  ':(gap>0.5?' ':''))+it.str;}
+            lastX=it.x;lastW=it.w;
+          }
+          return out;
+        });
+        pages.push(lines.join('\n'));
       }
-      const out=pages.join('\n').replace(/[ \t]+/g,' ').replace(/\n{3,}/g,'\n\n').trim();
+      const out=pages.join('\n\f\n').replace(/[ \t]{3,}/g,'   ').replace(/\n{3,}/g,'\n\n').trim();
       if(out.length>50) return out;
     }catch(e){console.log('[TaxFlow] pdfjs text fallback:',e.message);}
   }
@@ -14649,6 +14811,134 @@ function ncParseAddBacksFromText(text){
   }
   return items;
 }
+// --- BUGFIX: ncParseHPAssetsFromText / ncParseDisposalsFromText were referenced but never defined,
+// so hpAssets and disposals were always [] for every fallback (non-AI) tax computation extraction.
+function ncIsNumericCol(s){ return /^-?\(?\d[\d,]*(?:\.\d+)?\)?$/.test(s) || s==='-'; }
+function ncIsNoiseLine(s){
+  return /year of assessment|sdn\.?\s*bhd|activities of providing|tax file no|file no\s*:|page \d+ of \d+|^q\.?e\.?$/i.test(s);
+}
+
+function ncIsMoneyToken(s){ return /^\(?-?\d{1,3}(?:,\d{3})+(?:\.\d+)?\)?$/.test(s); }
+function ncIsAnyNumTok(s){ return /^\(?-?\d+(?:\.\d+)?\)?$/.test(s) || s==='-'; }
+function ncTokenize(line){ return line.trim().split(/\s+/).filter(Boolean); }
+function ncSplitDescAndNums(line){
+  let work=line.trim();
+  let prefix='';
+  const unitM=work.match(/^(\d+\s+unit[s]?\s+)/i);
+  if(unitM){ prefix=unitM[1]; work=work.slice(unitM[1].length); }
+  const toks=ncTokenize(work);
+  let firstNumIdx=toks.findIndex(t=>ncIsMoneyToken(t));
+  if(firstNumIdx<0) firstNumIdx=toks.findIndex((t,i)=>ncIsAnyNumTok(t)&&i>0);
+  if(firstNumIdx<0) return null;
+  const desc=(prefix+toks.slice(0,firstNumIdx).join(' ')).trim();
+  const nums=toks.slice(firstNumIdx).filter(t=>t!=='@').map(ncNum);
+  return {desc, nums};
+}
+function ncIsNoiseLine2(s){
+  return /year of assessment|sdn\.?\s*bhd|activities of providing|tax file no|file no\s*:|page \d+ of \d+|^q\.?e\.?$|lim tang tax|^natalie$/i.test(s);
+}
+
+function ncParseHPAssetsFromText(text, filename){
+  const raw = String(text||'');
+  const startIdx = raw.search(/SUMMARY OF HIRE PURCHASE CREDITORS SCHEDULE/i);
+  if(startIdx<0) return [];
+  const afterStart = raw.slice(startIdx+40);
+  let endIdx = raw.length;
+  const stop = afterStart.search(/HIRE PURCHASE CREDITORS SCHEDULE|SHAREHOLDERS' INFORMATION|DIRECTORS' INFORMATION/i);
+  if(stop>=0) endIdx = startIdx+40+stop;
+  const section = raw.slice(startIdx, endIdx);
+  const lines = section.split(/\n+/).map(l=>l.trim()).filter(Boolean);
+  const rows = [];
+  for(const line of lines){
+    if(ncIsNoiseLine2(line)) continue;
+    const split=ncSplitDescAndNums(line);
+    if(!split||!split.desc||split.nums.length<8) {
+      if(!ncIsAnyNumTok(line) && line.length>3 && rows.length && !ncIsNoiseLine2(line) &&
+         !/^(description|balance brought forward|payment made during the year|adjustment|balance carried forward|motor vehicle|grand total)$/i.test(line)){
+        rows[rows.length-1].description=(rows[rows.length-1].description+' '+line).trim();
+      }
+      continue;
+    }
+    if(/^grand total$/i.test(split.desc)) continue;
+    const nums=split.nums;
+    rows.push({
+      description: split.desc,
+      assetType: /vehicle|car|van|lorry|truck|honda|toyota|proton|volvo/i.test(split.desc)?'Motor Vehicle':'Other',
+      originalCost: nums[0]||0,
+      deposit: nums[1]||0,
+      principal: nums[2]||0,
+      qe: nums[2]||0,
+      balancePrincipalBF: nums[3]||0,
+      balanceInterestBF: nums[4]||0,
+      principalPaidThisYear: nums[6]!=null?nums[6]:null,
+      interestPaidThisYear: nums[7]!=null?nums[7]:null,
+      outstandingBalance: nums.length>=12?nums[11]:null,
+      note:'Parsed from Summary of Hire Purchase Creditors Schedule (text fallback)',
+      taxTreatment:'HP interest review; principal capital/add-back review',
+      source_page_or_schedule:'Summary of Hire Purchase Creditors Schedule'
+    });
+  }
+  return rows;
+}
+
+function ncParseDisposalsFromText(text, filename){
+  const raw = String(text||'');
+  const schedStart = raw.search(/BALANCING CHARGE\s*\/\s*\(ALLOWANCE\)\s*SCHEDULE/i);
+  if(schedStart<0) return [];
+  const afterSchedStart = raw.slice(schedStart+40);
+  let schedEnd = raw.length;
+  const stop = afterSchedStart.search(/SUMMARY OF HIRE PURCHASE|HIRE PURCHASE CREDITORS SCHEDULE/i);
+  if(stop>=0) schedEnd = schedStart+40+stop;
+  const schedText = raw.slice(schedStart, schedEnd);
+  const dispStart = schedText.search(/\bDISPOSAL\b/);
+  const woStart = schedText.search(/\bWRITTEN OFF\b/i);
+  if(dispStart<0) return [];
+
+  function parseBlock(blockText, label){
+    const lines = blockText.split(/\n+/).map(l=>l.trim()).filter(Boolean);
+    const rows=[];
+    for(const line of lines){
+      if(/^disposal$|^written off$/i.test(line)) continue;
+      if(ncIsNoiseLine2(line)) continue;
+      const split=ncSplitDescAndNums(line);
+      if(!split||!split.desc||split.nums.length<6){
+        if(!ncIsAnyNumTok(line) && line.length>3 && rows.length && !ncIsNoiseLine2(line) && !/^(remark:?|grand total)$/i.test(line)){
+          rows[rows.length-1].description=(rows[rows.length-1].description+' '+line).trim();
+        }
+        continue;
+      }
+      if(/^grand total$/i.test(split.desc)) continue;
+      const nums=split.nums;
+      rows.push({
+        description: split.desc,
+        yearAcquired: nums[0]||null,
+        cost: nums[1]||0,
+        accumulatedDepreciation: nums[2]||0,
+        netBookValue: nums[3]||0,
+        saleProceeds: nums[4]||0,
+        profitLossOnDisposal: nums[5]||0,
+        qualifyingCost: nums[6]||0,
+        caClaimed: nums[7]||0,
+        reBeforeDisposal: nums[8]||0,
+        deemedProceeds: nums[9]!=null?nums[9]:null,
+        balancingChargeAllowance: nums.length>=11?nums[10]:(nums.length?nums[nums.length-1]:0),
+        note:`Parsed from Balancing Charge/(Allowance) Schedule - ${label} (text fallback)`,
+        source_page_or_schedule:'Balancing Charge / (Allowance) Schedule'
+      });
+    }
+    return rows;
+  }
+
+  const dispBlock = woStart>dispStart ? schedText.slice(dispStart, woStart) : schedText.slice(dispStart);
+  const rows = parseBlock(dispBlock, 'Disposal');
+  if(woStart>=0){
+    const woBlock = schedText.slice(woStart);
+    rows.push(...parseBlock(woBlock, 'Written off'));
+  }
+  return rows;
+}
+
+
 function ncExtractTaxCompFromText(text,filename){
   const findAmt=(...pats)=>{for(const p of pats){const m=text.match(p);if(m&&m[1]){const n=parseFloat(m[1].replace(/,/g,''));if(!isNaN(n)&&n>0)return n;}}return null;};
   const strongAmt=(label,minAbs=0)=>{
@@ -14664,7 +14954,7 @@ function ncExtractTaxCompFromText(text,filename){
     }
     return null;
   };
-  const np=findAmt(/NET\s+PROFIT[:\s]*([\d,]+)/i),ci=findAmt(/CHARGEABLE\s+INCOME[:\s]*([\d,]+)/i);
+  const np=findAmt(/NET\s+PROFIT[:\s]*([\d,]+)/i,/NET\s+PROFIT\s*\/\s*\(?LOSS\)?[:\s]*([\d,]+)/i,/Balance\s+as\s+per\s+Profit\s+and\s+Loss\s+Account[:\s]*([\d,]+)/i,/Adjusted\s+Profit\s*\/\s*Loss\s+Account[:\s]*([\d,]+)/i),ci=findAmt(/CHARGEABLE\s+INCOME[:\s]*([\d,]+)/i);
   const tax=findAmt(/TOTAL.*TAX[:\s]*([\d,]+\.?\d{2})/i),cp=findAmt(/CP204[:\s]*([\d,]+)/i);
   const looseBC=findAmt(/BALANCING\s+CHARGE[:\s]*([\d,]+(?:\.\d{2})?)/i);
   const ca=strongAmt(/capital\s+allowances?/i,100)||null;
