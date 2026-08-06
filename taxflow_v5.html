@@ -898,6 +898,7 @@ table.t .tot td{background:var(--bg3)!important;font-weight:700;border-top:1px s
     <div class="tab" data-tab="mp-except">Review Required (21)</div>
     <div class="tab" data-tab="mp-ledger">All Ledger</div>
     <div class="tab" data-tab="mp-mine">Data Mining</div>
+    <div class="tab" data-tab="mp-groups" onclick="renderGroupProposals('mpGroupsBody')">Group Proposals</div>
   </div>
   <div class="pb" style="padding-top:10px">
     <div id="tab-mp-all"><div id="mpAllBody"></div></div>
@@ -905,6 +906,7 @@ table.t .tot td{background:var(--bg3)!important;font-weight:700;border-top:1px s
     <div id="tab-mp-except" style="display:none"><div id="mpExBody"></div></div>
     <div id="tab-mp-ledger" style="display:none"><div id="mpLedgerBody"></div></div>
     <div id="tab-mp-mine" style="display:none"><div id="mpMineBody"></div></div>
+    <div id="tab-mp-groups" style="display:none"><div id="mpGroupsBody"></div></div>
   </div>
 </div>
 
@@ -1813,18 +1815,18 @@ function taxRulingsFindMatch(name){
   return TAX_RULINGS_REGISTRY.filter(rule=>rule.detectKeywords.test(n)&&(!rule.excludeKeywords||!rule.excludeKeywords.test(n)));
 }
 const TB_SUBCATEGORY_DEFAULT={
-  'Current Asset':['Trade Debtors','Other Debtors','Deposits & Prepayments','Cash and Cash Equivalent','Inventories'],
-  'Current Liability':['Trade Creditors','Other Creditors','Provision / Accrual','Provision for Taxation','Deposit / Advance Received','HP Creditor (Short Term)','Loan (Short Term)'],
-  'Non-Current Liability':['HP Creditor (Long Term)','Loan (Long Term)'],
+  'Current Asset':['Trade debtors','Sundry debtors','Cash in hand and cash at bank','Other current assets'],
+  'Current Liability':['Loans','Trade creditors','Sundry creditors','Other current Liabilities'],
+  'Non-Current Liability':['Loans','Other long term liabilities'],
   'Non-Current Asset':['Investments','Other Non-Current Asset'],
-  'Fixed Asset':['Property / Building','Plant & Machinery','Motor Vehicle','Furniture & Fittings','Computer / ICT Equipment','Office Equipment','Renovation','Capital Work in Progress'],
-  'Revenue':['Sales / Trading Income','Service Income','Other Operating Revenue'],
-  'Cost of Sales':['Direct Material','Direct Labour','Subcontractor','Other Direct Cost'],
-  'Operating Expenses':['Administrative Expenses','Selling & Distribution Expenses','Other Operating Expenses'],
-  'Other Income':['Interest Income','Rental Income','Gain on Disposal','Miscellaneous Income'],
+  'Fixed Asset':['Motor vehicle','Land and buildings','Other fixed assets'],
+  'Revenue':['Sales/Turnover'],
+  'Cost of Sales':['Purchases','Cost of production'],
+  'Operating Expenses':['Interest','Professional, technical, management, legal fees',"Directors' fees",'Salaries and wages','Maintenance','Promotion and advertisement','Travelling and accommodation','Other expenditure'],
+  'Other Income':['Other Income'],
   'Finance Costs':['Bank Interest','HP Interest','Loan Interest'],
   'Finance Income':['Interest Income','Dividend Income'],
-  'Equity':['Share Capital','Retained Earnings','Other Equity'],
+  'Equity':['Paid up capital','Profit and loss appropriation account'],
   'Share Capital':['Ordinary Share Capital','Preference Share Capital'],
   'Retained Earnings':['Retained Earnings'],
 };
@@ -1839,12 +1841,11 @@ let TB_SUBCATEGORY_CUSTOM={};
 // numbering style in the Note Reference Setup screen.
 const NOTE_REF_STANDARD_ORDER=[
   'Revenue','Other Income','Profit Before Taxation','Taxation',
-  'Property / Building','Plant & Machinery','Motor Vehicle','Furniture & Fittings','Computer / ICT Equipment','Office Equipment','Renovation','Capital Work in Progress','Capital Allowance / FA Register',
-  'Inventories','Inventory (special account - BS & P&L)',
-  'Trade Debtors','Other Debtors','Deposits & Prepayments','Cash and Cash Equivalent','Cash and Bank',
-  'Share Capital','Retained Earnings',
-  'Trade Creditors','Other Creditors','Provision / Accrual','Provision for Taxation',
-  'HP Creditor (Short Term)','Loan (Short Term)','HP Creditor (Long Term)','Loan (Long Term)',
+  'Land and buildings','Motor vehicle','Other fixed assets','Capital Allowance / FA Register',
+  'Trade debtors','Sundry debtors','Cash in hand and cash at bank','Other current assets',
+  'Paid up capital','Profit and loss appropriation account',
+  'Trade creditors','Sundry creditors','Other current Liabilities',
+  'Loans','Other long term liabilities',
 ];
 const NOTE_REF_KEY='taxflow_note_ref_setup_v1';
 let NOTE_REF_STYLE='numeric'; // 'numeric' -> Note 1, 2, 3...  |  'alpha' -> a, b, c...
@@ -1929,6 +1930,106 @@ function tbSubCategoryOptions(classification){
   const items=(Array.isArray(custom)&&custom.length)?custom:(TB_SUBCATEGORY_DEFAULT[classification]||[]);
   return tbCanonicalSubCategoryList(classification,items);
 }
+// BUGFIX: malaysiaAuditAIMap()'s "schedule" output does two different jobs depending on
+// classification. For balance-sheet classes it's (mostly) already a real accounting
+// sub-category ("Trade Debtors", "Furniture & Fittings"). For P&L classes -- and a couple of
+// balance-sheet fallbacks -- it's a TAX/AUDIT schedule reference instead ("HK-1 / Payroll",
+// "Entertainment Review", "Capital Allowance / FA Register"), meant for the AI Mapping and
+// Form C screens, not an accounting sub-category. The Trial Balance's own Sub-Category column
+// only understands TB_SUBCATEGORY_DEFAULT's list, so a tax-schedule value falls straight
+// through its "not in the list" fallback and gets shown as-is -- looking like a random label
+// dropped into the wrong column (e.g. staff salary accounts showing "HK-1 / Payroll" instead
+// of "Administrative Expenses"). This resolves ANY schedule-ish value to a real sub-category
+// for the given classification, guessing from the account name when the raw value isn't
+// already a valid option. Never called on Trial Balance-confirmed manual choices, since those
+// are already a valid option by construction (the dropdown only ever offers valid ones).
+const TB_SUBCATEGORY_NAME_RULES={
+  'Fixed Asset':[
+    [/\bbuildings?\b|\bproperty\b|\bshop\s*lot\b|\bfactory\b|\bfactories\b|\bwarehouse\b|\bland\b/i,'Land and buildings'],
+    [/\bmotor\s*vehicles?\b|\bvans?\b|\blorr(?:y|ies)\b|\bcars?\b|\btrucks?\b/i,'Motor vehicle'],
+  ],
+  'Operating Expenses':[
+    [/interest/i,'Interest'],
+    [/\bprofessional\b|\btechnical\b|\bmanagement\s*fee|\blegal\b|\bconsult(?:ant|ing)?\b|\baudit\b|\bsecretari(?:al|es)?\b|\btax\s*agent\b/i,'Professional, technical, management, legal fees'],
+    [/director/i,"Directors' fees"],
+    [/\bstaff\b|\bsalary\b|\bsalaries\b|\bwages?\b|\bepf\b|\bsocso\b|\beis\b|\bhrdf\b|\bbonus(?:es)?\b|\bang\s*pow\b|\ballowances?\b|\bovertime\b|\bot\b|\blabou?r\b|\bworkers?\b/i,'Salaries and wages'],
+    [/\bmaintenance\b|\brepairs?\b/i,'Maintenance'],
+    [/\badvert(?:isement|ising)?\b|\bpromotions?\b|\bmarketing\b/i,'Promotion and advertisement'],
+    [/\btravel(?:ling|ing)?\b|\baccommodations?\b|\bhotels?\b|\bmileage\b|\bflights?\b|\bairfares?\b/i,'Travelling and accommodation'],
+  ],
+  'Revenue':[],
+  'Cost of Sales':[
+    [/\bpurchases?\b|\bmaterials?\b|\braw\b/i,'Purchases'],
+  ],
+  'Other Income':[],
+  'Finance Costs':[
+    [/hire\s*purchase|\bhp\b/i,'HP Interest'],
+    [/loan/i,'Loan Interest'],
+  ],
+  'Finance Income':[
+    [/dividend/i,'Dividend Income'],
+  ],
+  'Current Asset':[
+    [/\bcash\b|\bbank\b/i,'Cash in hand and cash at bank'],
+    [/debtor|receivable/i,'Sundry debtors'],
+  ],
+  'Current Liability':[
+    [/hire\s*purchase|\bhp\b/i,'Loans'],
+    [/loan/i,'Loans'],
+    [/creditor|payable/i,'Sundry creditors'],
+  ],
+  'Non-Current Liability':[
+    [/hire\s*purchase|\bhp\b|loan/i,'Loans'],
+  ],
+  'Non-Current Asset':[
+    [/invest/i,'Investments'],
+  ],
+  'Equity':[
+    [/share|capital/i,'Paid up capital'],
+    [/retain|reserve|profit\s*and\s*loss/i,'Profit and loss appropriation account'],
+  ],
+};
+// Last-resort default per classification when no name keyword matches -- always the most
+// generic / "Other ..." bucket already present in that classification's own option list.
+const TB_SUBCATEGORY_DEFAULT_FALLBACK={
+  'Fixed Asset':'Other fixed assets','Operating Expenses':'Other expenditure',
+  'Revenue':'Sales/Turnover','Cost of Sales':'Cost of production',
+  'Other Income':'Other Income','Finance Costs':'Bank Interest',
+  'Finance Income':'Interest Income','Current Asset':'Other current assets',
+  'Current Liability':'Other current Liabilities','Non-Current Liability':'Other long term liabilities',
+  'Non-Current Asset':'Other Non-Current Asset','Equity':'Profit and loss appropriation account',
+};
+function tbGuessSubCategory(classification,options,name){
+  const rules=TB_SUBCATEGORY_NAME_RULES[classification];
+  const n=String(name||'');
+  const opts=options||[];
+  if(rules){
+    for(const [re,val] of rules){
+      if(!re.test(n)) continue;
+      if(opts.includes(val)) return val;
+      // The keyword hint matched, but this classification's list has been customised
+      // (via Setup > Sub-Category Lists) and no longer contains that exact label --
+      // look for the closest match already in the user's own fixed list instead of
+      // ever suggesting something outside it.
+      const valWords=val.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+      const fuzzy=opts.find(opt=>{
+        const optWords=opt.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+        return valWords.some(w=>optWords.includes(w));
+      });
+      if(fuzzy) return fuzzy;
+    }
+  }
+  const fallback=TB_SUBCATEGORY_DEFAULT_FALLBACK[classification];
+  if(fallback&&opts.includes(fallback)) return fallback;
+  return opts[opts.length-1]||fallback||'';
+}
+function tbResolveSubCategory(classification,rawSchedule,name){
+  const options=tbSubCategoryOptions(classification);
+  if(!options.length) return rawSchedule||''; // classification has no sub-category concept at all
+  const canon=tbCanonicalSubCategory(rawSchedule,name);
+  if(canon&&options.includes(canon)) return canon;
+  return tbGuessSubCategory(classification,options,name)||canon||'';
+}
 function tbHasSubCategorySetup(classification){
   return classification in TB_SUBCATEGORY_DEFAULT || classification in TB_SUBCATEGORY_CUSTOM;
 }
@@ -1944,51 +2045,95 @@ const STATUS_COLOR = {
 
 function tfClientKey(){return (currentClient?.tin||currentClient?.id||'default')+'|'+(currentYA?.ya||'');}
 function tfPlainRows(rows){return (rows||[]).map(r=>({...r}));}
+function tfBuildStateSnapshot(){
+  return {
+    version:1,savedAt:new Date().toISOString(),
+    clients:CLIENTS,currentClientId:currentClient?.id||null,currentYA:currentYA?.ya||null,
+    audit:allAudit.slice(0,300),
+    ledgerYear:TF_LEDGER_YEAR||tfInferLedgerYear(),
+    lgSourcePdf:window.LG_SOURCE_PDF||'',lgSourceExcel:window.LG_SOURCE_EXCEL||'',
+    // fsMappingRows intentionally NOT persisted here -- it's a pure derived view of
+    // fsRows (fsBuildMappingRows(rows) reads nothing else), measured at ~39% of this
+    // save's entire payload on a real 340-account client purely from duplicating data
+    // fsRows already has. mapUpdateField already mirrors every AI Mapping screen edit
+    // straight back into fsRows in real time, so nothing is ever lost by not saving
+    // this copy -- tfLoadState() regenerates it fresh from fsRows on load instead.
+    workflow:{lgRows:tfPlainRows(window.lgRows||lgRows||[]),lgTransactions:LG_TRANSACTION_ROWS,lgRawHeaders:LG_RAW_HEADERS,fsRows:tfPlainRows(window._fsRows||[]),fsSavedRows:tfPlainRows(window._fsSavedRows||[]),workingPapers:WORKING_PAPERS,clientQueries:CLIENT_QUERY_ITEMS,deemedInterest:DEEMED_INTEREST_SCHEDULE,caWorkfile:CA_WORKFILE,mapMining:window._mapMining||[],fsOutputs:window._fsOutputs||null,fsConfirm:window._fsConfirm||null,fsMode:window._fsMode||'tb',fsBizSources:window._fsBizSources||null,fsBizView:window._fsBizView||'combined',admin:window.TF_ADMIN||null,masterAdmin:window.TF_MASTER_ADMIN||null}
+  };
+}
 function tfSaveState(){
   try{
-    const state={
-      version:1,savedAt:new Date().toISOString(),
-      clients:CLIENTS,currentClientId:currentClient?.id||null,currentYA:currentYA?.ya||null,
-      audit:allAudit.slice(0,300),
-      ledgerYear:TF_LEDGER_YEAR||tfInferLedgerYear(),
-      lgSourcePdf:window.LG_SOURCE_PDF||'',lgSourceExcel:window.LG_SOURCE_EXCEL||'',
-      workflow:{lgRows:tfPlainRows(window.lgRows||lgRows||[]),lgTransactions:LG_TRANSACTION_ROWS,lgRawHeaders:LG_RAW_HEADERS,fsRows:tfPlainRows(window._fsRows||[]),fsSavedRows:tfPlainRows(window._fsSavedRows||[]),fsMappingRows:tfPlainRows(window._fsMappingRows||[]),workingPapers:WORKING_PAPERS,clientQueries:CLIENT_QUERY_ITEMS,deemedInterest:DEEMED_INTEREST_SCHEDULE,caWorkfile:CA_WORKFILE,mapMining:window._mapMining||[],fsOutputs:window._fsOutputs||null,fsConfirm:window._fsConfirm||null,fsMode:window._fsMode||'tb',fsBizSources:window._fsBizSources||null,fsBizView:window._fsBizView||'combined',admin:window.TF_ADMIN||null,masterAdmin:window.TF_MASTER_ADMIN||null}
-    };
-    localStorage.setItem(TF_STATE_KEY,JSON.stringify(state));
+    localStorage.setItem(TF_STATE_KEY,JSON.stringify(tfBuildStateSnapshot()));
   }catch(e){console.warn('[TaxFlow] save state failed',e);}
 }
-function tfLoadState(){
+// PERF: localStorage.setItem is synchronous and blocks the main thread for the full
+// duration of the write -- measured at ~40ms even after trimming the payload (see
+// tfBuildStateSnapshot's fsMappingRows note). IndexedDB writes run off the main thread,
+// so this is what actually lets a routine field-edit save feel instant rather than just
+// "smaller". Used only for the debounced per-edit flush (tfRequestRefreshAllSchedules) --
+// every other one-off action in the app (uploads, resets, confirms) still calls the
+// synchronous tfSaveState() above, unchanged. Fire-and-forget: nothing in the app reads
+// this write's result directly, only tfLoadState() on the next page load.
+function tfSaveStateAsync(){
   try{
-    const raw=localStorage.getItem(TF_STATE_KEY); if(!raw) return false;
-    const state=JSON.parse(raw);
-    if(Array.isArray(state.clients)&&state.clients.length){CLIENTS.splice(0,CLIENTS.length,...state.clients);}
-    if(Array.isArray(state.audit)&&state.audit.length) allAudit=state.audit;
-    TF_LEDGER_YEAR=state.ledgerYear||tfInferLedgerYear(state);
-    window.LG_SOURCE_PDF=state.lgSourcePdf||'';
-    window.LG_SOURCE_EXCEL=state.lgSourceExcel||'';
-    currentClient=CLIENTS.find(c=>c.id===state.currentClientId)||CLIENTS[0]||null;
-    currentYA=currentClient?.years?.find(y=>y.ya===state.currentYA)||currentClient?.years?.[0]||null;
-    if(state.workflow){
-      lgRows=state.workflow.lgRows||[];
-      LG_TRANSACTION_ROWS=state.workflow.lgTransactions||[];
-      LG_RAW_HEADERS=state.workflow.lgRawHeaders||[];
-      window._lgConfirmedRows=lgRows;
-      window._fsRows=state.workflow.fsRows||null;
-      window._fsSavedRows=state.workflow.fsSavedRows||null;
-      window._fsMappingRows=state.workflow.fsMappingRows||null;
-      WORKING_PAPERS=state.workflow.workingPapers||[];
-      CLIENT_QUERY_ITEMS=state.workflow.clientQueries||[];
-      DEEMED_INTEREST_SCHEDULE=state.workflow.deemedInterest||null;
-      CA_WORKFILE=state.workflow.caWorkfile||CA_WORKFILE;
-      window._mapMining=state.workflow.mapMining||[];
-      window._fsOutputs=state.workflow.fsOutputs||null;
-      window._fsConfirm=state.workflow.fsConfirm||null;
-      window._fsMode=state.workflow.fsMode||'tb';
-      window._fsBizSources=state.workflow.fsBizSources||null;
-      window._fsBizView=state.workflow.fsBizView||'combined';
-      window.TF_ADMIN=state.workflow.admin||window.TF_ADMIN||{};
-      window.TF_MASTER_ADMIN=state.workflow.masterAdmin||window.TF_MASTER_ADMIN||null;
-    }
+    const snap=tfBuildStateSnapshot();
+    cdbPut('appState',Object.assign({key:'main'},snap)).catch(e=>console.warn('[TaxFlow] async save failed, will retry on next edit',e));
+  }catch(e){console.warn('[TaxFlow] async save failed',e);}
+}
+function tfApplyLoadedState(state){
+  if(Array.isArray(state.clients)&&state.clients.length){CLIENTS.splice(0,CLIENTS.length,...state.clients);}
+  if(Array.isArray(state.audit)&&state.audit.length) allAudit=state.audit;
+  TF_LEDGER_YEAR=state.ledgerYear||tfInferLedgerYear(state);
+  window.LG_SOURCE_PDF=state.lgSourcePdf||'';
+  window.LG_SOURCE_EXCEL=state.lgSourceExcel||'';
+  currentClient=CLIENTS.find(c=>c.id===state.currentClientId)||CLIENTS[0]||null;
+  currentYA=currentClient?.years?.find(y=>y.ya===state.currentYA)||currentClient?.years?.[0]||null;
+  if(state.workflow){
+    lgRows=state.workflow.lgRows||[];
+    LG_TRANSACTION_ROWS=state.workflow.lgTransactions||[];
+    LG_RAW_HEADERS=state.workflow.lgRawHeaders||[];
+    window._lgConfirmedRows=lgRows;
+    window._fsRows=state.workflow.fsRows||null;
+    window._fsSavedRows=state.workflow.fsSavedRows||null;
+    // fsMappingRows is no longer saved directly (see tfBuildStateSnapshot) -- rebuild it
+    // fresh from fsRows, which is exactly what fsBuildMappingRows() already does.
+    window._fsMappingRows=window._fsRows?fsBuildMappingRows(window._fsRows):(state.workflow.fsMappingRows||null);
+    WORKING_PAPERS=state.workflow.workingPapers||[];
+    CLIENT_QUERY_ITEMS=state.workflow.clientQueries||[];
+    DEEMED_INTEREST_SCHEDULE=state.workflow.deemedInterest||null;
+    CA_WORKFILE=state.workflow.caWorkfile||CA_WORKFILE;
+    window._mapMining=state.workflow.mapMining||[];
+    window._fsOutputs=state.workflow.fsOutputs||null;
+    window._fsConfirm=state.workflow.fsConfirm||null;
+    window._fsMode=state.workflow.fsMode||'tb';
+    window._fsBizSources=state.workflow.fsBizSources||null;
+    window._fsBizView=state.workflow.fsBizView||'combined';
+    window.TF_ADMIN=state.workflow.admin||window.TF_ADMIN||{};
+    window.TF_MASTER_ADMIN=state.workflow.masterAdmin||window.TF_MASTER_ADMIN||null;
+  }
+}
+// Routine field edits save asynchronously to IndexedDB (see tfSaveStateAsync) so they
+// never block the UI; navigating away or closing the tab still falls back to a
+// synchronous localStorage write as a durability safety net (see tfFlushPendingSave)
+// since an in-flight async IndexedDB write isn't guaranteed to finish before the page
+// actually unloads. That means on the NEXT load, either save path could hold the more
+// recent work depending on how the previous session ended -- compare both by their
+// savedAt timestamp and restore whichever is actually newer, rather than assuming one
+// path is always authoritative.
+async function tfLoadState(){
+  let idbState=null, lsState=null;
+  try{
+    const rec=await cdbGet('appState','main');
+    if(rec) idbState=rec;
+  }catch(e){console.warn('[TaxFlow] IndexedDB load failed, falling back to localStorage',e);}
+  try{
+    const raw=localStorage.getItem(TF_STATE_KEY);
+    if(raw) lsState=JSON.parse(raw);
+  }catch(e){console.warn('[TaxFlow] localStorage load failed',e);}
+  const state=(idbState&&lsState)?((idbState.savedAt||'')>(lsState.savedAt||'')?idbState:lsState):(idbState||lsState);
+  if(!state) return false;
+  try{
+    tfApplyLoadedState(state);
     return true;
   }catch(e){console.warn('[TaxFlow] load state failed',e);return false;}
 }
@@ -2101,6 +2246,7 @@ const WZ_P=['setup-client','setup-prioryr','setup-extract','setup-client','ledge
 let wzStep=8;
 
 function goTo(panelId, navEl){
+  if(typeof tfFlushPendingSave==='function') tfFlushPendingSave();
   const p=document.getElementById('panel-'+panelId);
   if(p?.closest('.desk-window')){
     document.querySelectorAll('.sb-item').forEach(s=>s.classList.remove('active'));
@@ -5869,14 +6015,39 @@ function wpInferPeriod(line){
   return currentYA?.basisFrom&&currentYA?.basisTo?`${currentYA.basisFrom} to ${currentYA.basisTo}`:'Current basis period';
 }
 function wpSuggestDisallowPct(wp,base){
-  const t=[wp.treatment,wp.schedule,base?.taxComment,base?.particulars].filter(Boolean).join(' ').toLowerCase();
-  if(!/add back|restrict|non.?deductible|disallow/.test(t)) return 0;
+  const t=[wp.treatment,wp.schedule,base?.taxComment,base?.particulars,base?.paidFor].filter(Boolean).join(' ').toLowerCase();
+  // LESSON FROM AILS YA2024 (real filed return vs our draft): a customer "annual dinner cash
+  // contribution" was sitting in the Greetings & Condolences GL account and got the blanket 50%
+  // entertainment rate applied to it. The tax agent's actual filed treatment classifies cash
+  // contributions/donations to third parties as Donation-type (100% disallow), regardless of
+  // which GL account they happen to be coded to. Check this BEFORE the entertainment rule.
+  if(/contribution|donat/.test(t) && !/staff|employee|condolence/.test(t)) return 100;
+  // Same lesson, second half: within an "Entertainment" account, a GIFT line item (e.g. alcohol
+  // gifts to customers) is 100% disallowed, not the blanket 50% entertainment rate -- the real
+  // return split RM151,094 of "Entertainment" into RM130,874 @ 50% and RM20,220 (gifts) @ 100%.
+  if(/\bgift\b/.test(t)) return 100;
+  if(!/add back|restrict|non.?deductible|disallow/.test(t)){
+    // Branded/logo merchandise reads as a gift, not marketing spend, even when the account
+    // itself isn't flagged "Add Back" -- AILS's "Marketing expenses" (branded laptop backpack)
+    // was wrongly left fully allowable; the real return disallows it 100%.
+    if(/logo|branded|merchandise/.test(t)) return 100;
+    // A provision/allowance for doubtful or bad debts is a real P&L charge needing review, even
+    // when the account is coded as a balance-sheet contra-asset that could hide the current
+    // year's movement from the expense side entirely.
+    if(/doubtful debt|bad debt/.test(t)) return 100;
+    if(/filing fee/.test(t)) return 100;
+    if(/director.*(personal|insurance)|personal insurance/.test(t)) return 100;
+    return 0;
+  }
   if(/entertain/.test(t)) return 50;
   if(/depreciation|capital allowance|amortisation/.test(t)) return 100;
   if(/penalty|fine|compound/.test(t)) return 100;
   if(/donation|gift/.test(t)) return 100;
   if(/private|personal|non.?business/.test(t)) return 100;
   if(/hp principal|principal repayment/.test(t)) return 100;
+  if(/director.*insurance|personal insurance/.test(t)) return 100;
+  if(/filing fee/.test(t)) return 100;
+  if(/shared|related part/.test(t)) return 50; // cost shared with a related company -- default 50%, needs confirming against the actual policy/invoice split
   return 100; // any other explicit "Add Back" treatment defaults to full disallowance until reviewed
 }
 function wpSetDisallowPct(id,val){
@@ -6699,13 +6870,18 @@ function renderMapping(){
   }
   const table=(rows,tableId='all')=>{
     const filters=window._mapFilters||{};
+    // WORKING_PAPERS.some(...) was being re-scanned from scratch for every one of the ~340
+    // rows below (O(n*m) where m = WORKING_PAPERS.length) -- this was the single biggest
+    // contributor to renderMapping() taking ~3 seconds and freezing the UI on every field
+    // change. Build the lookup once as a Set (O(m)), then each row check is O(1).
+    const postedCodes=new Set(WORKING_PAPERS.map(w=>String(w.code)));
     const dl=(key,vals)=>`<datalist id="map-dl-${tableId}-${key}">${[...new Set(vals.filter(Boolean).map(v=>String(v)))].sort().slice(0,500).map(v=>`<option value="${tfEsc(v)}"></option>`).join('')}</datalist>`;
     const lists={
       code:rows.map(m=>m.code),name:rows.map(m=>m.name),source:rows.map(m=>m.src),treat:rows.map(m=>m.treat),schedule:rows.map(m=>m.schedule),
       wp:['posted','not posted'],query:['required','optional']
     };
     let view=rows.filter(m=>{
-      const posted=WORKING_PAPERS.some(w=>String(w.code)===String(m.code));
+      const posted=postedCodes.has(String(m.code));
       const hay={
         code:String(m.code||'').toLowerCase(),name:String(m.name||'').toLowerCase(),source:String(m.src||'').toLowerCase(),
         treat:String(m.treat||'').toLowerCase(),schedule:String(m.schedule||'').toLowerCase(),wp:posted?'posted':'not posted',query:m.query?'required':'optional'
@@ -6827,12 +7003,30 @@ function renderMapping(){
       </td>
     </tr>`;}).join('')}</tbody>
   </table></div>`;};
-  document.getElementById('mpAllBody').innerHTML=table(src,'all');
-  const rulesEl=document.getElementById('mpRulesBody'); if(rulesEl) rulesEl.innerHTML=table(src.filter(m=>m.src==='RULE'),'rules');
-  const exEl=document.getElementById('mpExBody'); if(exEl) exEl.innerHTML=`<div class="card al" style="padding:10px 12px;margin-bottom:10px;font-size:12px;color:var(--t2)">Review Required means the account needs human review or supporting documents, for example tax-sensitive items, CA/FA accounts, unusual BS balances, or client confirmation. It is not an error.</div>${table(reviewRows,'review')}`;
-  const ledgerEl=document.getElementById('mpLedgerBody'); if(ledgerEl) ledgerEl.innerHTML=mapAllLedgerHTML();
-  const mineEl=document.getElementById('mpMineBody'); if(mineEl) mineEl.innerHTML=mapMiningHTML();
-  mapRenderMine();
+  // PERFORMANCE FIX: this used to build all 5 tabs' full HTML (each a few hundred rows,
+  // with datalists, sorting and filtering) synchronously on every single call --
+  // measured at ~3 seconds for a ~340-account ledger, which is what was showing up as the
+  // app "hanging" every time a field got changed (mapUpdateField -> tfRefreshAllSchedules
+  // -> renderMapping). Only 1 of the 5 tabs is ever visible at once (the others are
+  // display:none). Render the visible tab synchronously so the screen the user is looking
+  // at updates instantly, and defer the other four to run just after, so they're ready by
+  // the time the user clicks over to them without blocking this interaction.
+  const tabVisible=(elId)=>{ const el=document.getElementById(elId); return el && el.style.display!=='none'; };
+  const renderAll=()=>{ const el=document.getElementById('mpAllBody'); if(el) el.innerHTML=table(src,'all'); };
+  const renderRules=()=>{ const el=document.getElementById('mpRulesBody'); if(el) el.innerHTML=table(src.filter(m=>m.src==='RULE'),'rules'); };
+  const renderReview=()=>{ const el=document.getElementById('mpExBody'); if(el) el.innerHTML=`<div class="card al" style="padding:10px 12px;margin-bottom:10px;font-size:12px;color:var(--t2)">Review Required means the account needs human review or supporting documents, for example tax-sensitive items, CA/FA accounts, unusual BS balances, or client confirmation. It is not an error.</div>${table(reviewRows,'review')}`; };
+  const renderLedger=()=>{ const el=document.getElementById('mpLedgerBody'); if(el) el.innerHTML=mapAllLedgerHTML(); };
+  const renderMine=()=>{ const el=document.getElementById('mpMineBody'); if(el) el.innerHTML=mapMiningHTML(); mapRenderMine(); };
+  const renderGroups=()=>renderGroupProposals('mpGroupsBody');
+  const tabRenders=[
+    ['tab-mp-all',renderAll],['tab-mp-rules',renderRules],['tab-mp-except',renderReview],
+    ['tab-mp-ledger',renderLedger],['tab-mp-mine',renderMine],['tab-mp-groups',renderGroups]
+  ];
+  const visible=tabRenders.filter(([id])=>tabVisible(id));
+  const hidden=tabRenders.filter(([id])=>!tabVisible(id));
+  (visible.length?visible:tabRenders).forEach(([,fn])=>fn()); // if none detected visible (e.g. first load), render all synchronously to be safe
+  if(visible.length) hidden.forEach(([,fn])=>setTimeout(fn,0));
+  return;
 }
 // ── Mapping treatment & schedule option lists ──
 const MAP_TREAT_OPTIONS = ["Add Back - HP Principal", "Add Back - S.39(1)(b) Depreciation", "Add Back - S.39(1)(h) Penalty", "Add Back / Restrict - Entertainment", "Allowable - Employment cost", "Allowable - S.33(1)", "Allowable / Director disclosure", "Allowable / Review capital nature", "Balance Sheet - Current Asset", "Balance Sheet - Current Liability", "Balance Sheet - Non-Current Liability", "Balance Sheet - Retained Earnings", "Balance Sheet - Share Capital", "CA Review - Schedule 3", "Dividend - Review exemption", "Fixed Asset Contra - no P&L add-back", "HP Interest - Deductible portion", "Interest Income - S.4(c)", "Rental Income - Review source", "Review - Donation / Gift", "Review - Tax sensitive account", "Taxable business income - S.4(a)", "Taxable business income - review"];
@@ -7174,9 +7368,15 @@ function mapUpdateField(code,field,value){
     if(field==='classification') r.classification=value;
     if(saved.classification) r.classification=saved.classification;
     if(field==='treat') r.taxTreat=value;
-    if(field==='schedule') r.schedule=value;
-    if(saved.schedule) r.schedule=saved.schedule;
     if(saved.treat) r.taxTreat=saved.treat;
+    // Route through the same tax-schedule/sub-category resolution as every other entry
+    // point -- a raw Mapping-screen schedule value (MAP_SCHED_OPTIONS taxonomy, e.g.
+    // "HK-1 / Payroll") is not itself a valid TB accounting sub-category.
+    const schedVal=field==='schedule'?value:saved.schedule;
+    if(schedVal){
+      r.taxSchedule=schedVal;
+      r.schedule=tbResolveSubCategory(r.classification,schedVal,r.name);
+    }
     r.confirmed=true;
     r.reason='Manual mapping saved to this client learning profile.';
   });
@@ -7208,7 +7408,7 @@ function mapAllAccounts(){
       const map=malaysiaAuditAIMap(r.code,r.name,r.bal||r.tyBal||0);
       const learned=mapLearnLookup(r.code,r.name)||{};
       return {
-        code:r.code,name:r.name,amt:Math.abs(r.bal||r.tyBal||r.dr||r.cr||0),
+        code:r.code,name:r.name,amt:Math.abs(r.bal||r.tyBal||r.dr||r.cr||0),bal:Number(r.bal||r.tyBal||0),
         classification:saved.classification||r.classification||learned.classification||map.classification,
         src:saved.src||learned.src||(r.confirmed?'USER':'RULE'),
         treat:saved.treat||r.taxTreat||learned.treat||map.treat,
@@ -7567,6 +7767,159 @@ function mapWPRef(m){
   if(/fixed asset|depreciation|motor vehicle|computer|furniture|renovation|signboard/.test(n)) return 'N12';
   if(/interest|finance|hp/.test(n)) return 'N2';
   return 'WP';
+}
+// ── Group-based classification proposal ──────────────────────────────────
+// Implements the accountant's actual working method for an unfamiliar client's chart of
+// accounts (numbering set by the client, not a fixed convention we can hardcode per client):
+//   1. Cluster account codes into numeric GROUPS by shared prefix (e.g. every code sharing
+//      the same leading digits within a gap-free run belongs to one group -- "300, 305, 310,
+//      315" is one group even if a different client uses "1200, 1205, 1210" for the same
+//      concept).
+//   2. Within a group, find an ANCHOR account -- one whose NAME clearly states what the whole
+//      group is (e.g. "CASH AT BANK", "TRADE DEBTORS", "ACCRUAL FOR SALARY") -- and use that
+//      to label the group's broad category (Cash & Cash Equivalents / Current Asset /
+//      Current Liability / Accruals & Provisions etc.).
+//   3. Within a labelled group, DR/CR balance direction and each account's own wording then
+//      decide the SPECIFIC sub-type: on the debit side, Trade Debtors / Other Debtors /
+//      Inventories / Prepayments / Deposits; on the credit side, Trade Creditors / Other
+//      Creditors / Provision for Taxation / HP Creditor (current) / Term Loan (current).
+//   4. The FIRST (lowest-numbered) account in a group with no other clear signal defaults to
+//      the group's PRIMARY sub-type (Trade Debtors on the asset side, Trade Creditors on the
+//      liability side) -- matching how these charts of accounts are conventionally built.
+// Returns PROPOSALS only -- nothing is applied until the user confirms via mapUpdateField,
+// which is what feeds the existing per-client learning system (learnCodePattern /
+// learnSchedulePattern) so the same client's confirmed groups are remembered next time.
+const GROUP_ANCHOR_PATTERNS=[
+  {test:/\bcash\b|\bbank\b/i, category:'Current Asset', schedule:'Cash in hand and cash at bank', side:'any'},
+  {test:/trade\s*debtor/i, category:'Current Asset', schedule:'Trade debtors', side:'dr'},
+  {test:/trade\s*creditor/i, category:'Current Liability', schedule:'Trade creditors', side:'cr'},
+  {test:/\baccrual\b|\bprovision\b/i, category:'Current Liability', schedule:'Other current Liabilities', side:'cr'},
+  {test:/deposit.*(paid|rental|utilit)|deposit\s*-/i, category:'Current Asset', schedule:'Other current assets', side:'dr'},
+  {test:/deposit.*(received|advance)/i, category:'Current Liability', schedule:'Other current Liabilities', side:'cr'},
+  {test:/prepay/i, category:'Current Asset', schedule:'Other current assets', side:'dr'},
+  {test:/inventor|stock/i, category:'Current Asset', schedule:'Other current assets', side:'dr'},
+  {test:/hire\s*purchase|\bhp\b.*creditor/i, category:'Current Liability', schedule:'Loans', side:'cr'},
+  {test:/term\s*loan/i, category:'Current Liability', schedule:'Loans', side:'cr'},
+  {test:/provision.*tax|tax.*provision/i, category:'Current Liability', schedule:'Other current Liabilities', side:'cr'},
+  {test:/staff\s*loan/i, category:'Current Asset', schedule:'Other current assets', side:'dr'},
+  {test:/fixed\s*asset|property|plant|equipment|motor\s*vehicle|furniture|renovation/i, category:'Fixed Asset', schedule:'Capital Allowance / FA Register', side:'any'},
+];
+// Groups account codes into runs sharing the same numeric "family" -- codes are grouped by
+// their leading digits (tries 3-digit prefix first, falls back to 2-digit, then 1-digit) so
+// that e.g. 300/305/310/315 cluster together regardless of which specific digits a client's
+// numbering convention actually uses.
+function groupAccountCodes(accounts){
+  const groups={};
+  accounts.forEach(a=>{
+    const s=String(a.code||'').replace(/[^0-9A-Z]/gi,'');
+    const prefix=s.slice(0,3)||s.slice(0,2)||s.slice(0,1);
+    if(!prefix) return;
+    groups[prefix]=groups[prefix]||[];
+    groups[prefix].push(a);
+  });
+  return groups;
+}
+function proposeGroupBasedClassification(accounts){
+  const groups=groupAccountCodes(accounts);
+  const proposals=[];
+  Object.entries(groups).forEach(([prefix,members])=>{
+    members.sort((a,b)=>String(a.code).localeCompare(String(b.code)));
+    // Step 1: find an anchor within this group whose name clearly signals the group's type.
+    let anchor=null;
+    for(const acct of members){
+      const hit=GROUP_ANCHOR_PATTERNS.find(p=>p.test.test(acct.name||''));
+      if(hit){ anchor=hit; break; }
+    }
+    // Step 1b: no member explicitly SAYS what the group is (e.g. a customer/vendor
+    // sub-ledger where every account is just a company name, "AIMTRANS LOGISTICS SDN BHD" --
+    // no account literally says "trade debtor"). This is exactly the pattern described: a
+    // large family of individually-named counterparty accounts under one code range. Infer
+    // it from the SHAPE of the group instead of any single account's wording -- many members,
+    // balances consistently one-sided -- and default the whole group to Trade debtors (mostly
+    // debit) or Trade creditors (mostly credit), the same way the first account in such a
+    // group conventionally sets the pattern for the rest.
+    if(!anchor && members.length>=3){
+      const drCount=members.filter(a=>Number(a.bal||a.tyBal||0)>=0).length;
+      const crCount=members.length-drCount;
+      const mostlyDr=drCount>=members.length*0.7;
+      const mostlyCr=crCount>=members.length*0.7;
+      if(mostlyDr) anchor={category:'Current Asset',schedule:'Trade debtors',side:'dr',_inferred:true};
+      else if(mostlyCr) anchor={category:'Current Liability',schedule:'Trade creditors',side:'cr',_inferred:true};
+    }
+    if(!anchor) return; // no recognisable signal or pattern in this group -- leave to name-based rules
+    members.forEach((acct,idx)=>{
+      const bal=Number(acct.bal||acct.tyBal||0);
+      const side=bal>=0?'dr':'cr';
+      const nameHit=GROUP_ANCHOR_PATTERNS.find(p=>p.test.test(acct.name||''));
+      let category=anchor.category, schedule=anchor.schedule;
+      let reason=anchor._inferred
+        ?`Group ${prefix}xx has ${members.length} individually-named counterparty accounts with consistently ${side==='dr'?'debit':'credit'} balances and no explicit "trade debtor/creditor" wording on any of them -- inferred as a ${anchor.schedule} sub-ledger from the shape of the group (first account "${members[0].name}" sets the pattern).`
+        :`Group ${prefix}xx anchored by "${anchor.schedule}" wording found elsewhere in this code family.`;
+      if(nameHit){
+        category=nameHit.category; schedule=nameHit.schedule;
+        reason=`This account's own wording matches "${nameHit.schedule}".`;
+      } else if(anchor._inferred){
+        // whole inferred sub-ledger group keeps the anchor's Trade debtors/creditors label --
+        // that IS the point (every member is a counterparty, not just the first one) -- unless
+        // this specific member's own balance direction disagrees with the group's dominant side.
+        if(side!==anchor.side){
+          category=side==='dr'?'Current Asset':'Current Liability';
+          schedule=side==='dr'?'Sundry debtors':'Sundry creditors';
+          reason=`Balance direction (${side.toUpperCase()}) disagrees with the group's dominant side -- proposed as ${schedule} instead of the group default.`;
+        }
+      } else if(idx===0){
+        // First (lowest-numbered) account in the group with no specific wording of its own --
+        // defaults to the group's PRIMARY sub-type per the accountant's convention.
+        if(anchor.schedule==='Trade debtors'||anchor.schedule==='Trade creditors'){
+          category=anchor.category; schedule=anchor.schedule;
+          reason=`First account in the ${prefix}xx group — defaults to the group's primary type (${anchor.schedule}) per standard chart-of-accounts convention.`;
+        } else if(side==='dr'){
+          category='Current Asset'; schedule='Sundry debtors';
+          reason=`No specific wording; debit balance within a ${prefix}xx group anchored by "${anchor.schedule}" — proposed as Sundry debtors.`;
+        } else {
+          category='Current Liability'; schedule='Sundry creditors';
+          reason=`No specific wording; credit balance within a ${prefix}xx group anchored by "${anchor.schedule}" — proposed as Sundry creditors.`;
+        }
+      } else if(anchor.side!=='any'){
+        // Subsequent accounts in a debtor/creditor-anchored group without their own specific
+        // wording: side (Dr/Cr) decides Sundry debtors vs Sundry creditors, per the requested
+        // priority order (code group -> Dr/Cr -> name).
+        if(side==='dr'){ category='Current Asset'; schedule='Sundry debtors'; }
+        else { category='Current Liability'; schedule='Sundry creditors'; }
+        reason=`No specific wording; ${side.toUpperCase()} balance within the ${prefix}xx group anchored by "${anchor.schedule}".`;
+      }
+      proposals.push({code:acct.code,name:acct.name,bal,category,schedule,reason,groupPrefix:prefix,confirmed:false});
+    });
+  });
+  return proposals;
+}
+// Renders the group-based proposals as a confirm-one-by-one review list (mirrors the
+// existing AI Mapping confirm pattern) -- nothing is applied until "Confirm" is clicked,
+// which routes through mapUpdateField so it's saved and learned exactly like any other
+// manual mapping decision.
+function renderGroupProposals(containerId){
+  const el=document.getElementById(containerId); if(!el) return;
+  const accounts=mapAllAccounts();
+  const proposals=proposeGroupBasedClassification(accounts);
+  window._groupProposals=proposals;
+  if(!proposals.length){ el.innerHTML='<div class="card al" style="padding:16px;text-align:center;color:var(--t3)">No recognisable code groups found yet — needs at least one account per group with clear wording (cash/bank, trade debtor, accrual, etc.) to anchor from.</div>'; return; }
+  el.innerHTML=`<div class="card al" style="padding:10px 12px;margin-bottom:10px;font-size:12px;color:var(--t2)">
+    Proposed from code-group + Dr/Cr + wording analysis. Review and confirm each line — confirming saves it to this client's learning profile so the same group is recognised automatically next time.</div>
+    <div class="tw"><table class="t"><thead><tr><th>Code</th><th>Account Name</th><th class="r">Amount</th><th>Proposed Category</th><th>Proposed Schedule</th><th>Why</th><th>Action</th></tr></thead><tbody>
+    ${proposals.map((p,i)=>`<tr>
+      <td class="m">${tfEsc(p.code)}</td><td>${tfEsc(p.name)}</td><td class="r m">${fsMoney(Math.abs(p.bal))}</td>
+      <td>${tfEsc(p.category)}</td><td>${tfEsc(p.schedule)}</td>
+      <td style="font-size:11px;color:var(--t3)">${tfEsc(p.reason)}</td>
+      <td><button class="btn btn-primary btn-sm" onclick="confirmGroupProposal(${i})">Confirm</button></td>
+    </tr>`).join('')}
+    </tbody></table></div>`;
+}
+function confirmGroupProposal(idx){
+  const p=(window._groupProposals||[])[idx]; if(!p) return;
+  mapUpdateField(p.code,'classification',p.category);
+  mapUpdateField(p.code,'schedule',p.schedule);
+  p.confirmed=true;
+  showNotif('success','Group mapping confirmed',p.code+' saved as '+p.category+' / '+p.schedule);
 }
 function mapPostToWP(code){
   const m=mapFindRow(code); if(!m) return;
@@ -10784,8 +11137,29 @@ function malaysiaAuditAIMap(code,name,bal){
   const out={classification:'Operating Expenses',treat:'Allowable - S.33(1)',schedule:'P&L',confidence:.86,query:false,wp:false,reason:'Matched as ordinary business expense.'};
   const set=(classification,treat,schedule,confidence,query,reason,wp=false)=>Object.assign(out,{classification,treat,schedule,confidence,query,reason,wp});
   let usedFallback=false;
-  const codeHint=learnedSchedulePrefixClass(code)||learnedCodeClass(code,bal);
-  if(n.match(/sales|revenue|turnover|service income|fee income/)) set('Revenue','Taxable business income - S.4(a)','P&L Revenue',.98,false,'Business revenue credited to P&L.');
+  // PRIORITY ORDER (per the tax agent's actual working method): account CODE PREFIX first,
+  // then DR/CR balance direction to disambiguate, and only then account NAME as the final
+  // tie-breaker. This used to be inverted -- ~30 name-keyword rules ran first and a generic
+  // rule (e.g. "maintenance") could misclassify a clearly-coded account (e.g. 620-0020
+  // "SOFTWARE LICENSE & MAINTENANCE FEES", Cost of Sales by code, was landing in Operating
+  // Expenses by name). Code match now short-circuits the whole name-based chain below.
+  const codeHint=learnedCodeClass(code,bal)||learnedSchedulePrefixClass(code)||standardPLCodePrefixClass(code)||taxAgentCodePrefixClass(code,bal);
+  if(codeHint){
+    usedFallback=true;
+    set(codeHint.classification,codeHint.treat,codeHint.schedule,codeHint.confidence,codeHint.query,codeHint.reason,codeHint.wp);
+    // A handful of name signals are specific enough to override even a confident code match --
+    // these are cases where the code range is right but the SPECIFIC treatment needs a name
+    // check (e.g. "accum./deprn." within the 200- fixed-asset range is a contra-asset, not a
+    // cost; "entertainment" or "penalty" within an Operating Expenses code needs its own
+    // tax treatment, not the generic Admin default).
+    if(n.match(/\b(accumulated|accum\.?)\s*(depreciation|deprn\.?)\b/)) set('Fixed Asset','Fixed Asset Contra - no P&L add-back','FA Register / Contra Asset',.99,false,'Accumulated depreciation stays under fixed assets as contra asset, not depreciation expense.',true);
+    else if(codeHint.classification==='Operating Expenses'){
+      if(n.match(/penalty|fine|compound/)) set('Operating Expenses','Add Back - S.39(1)(h) Penalty','Schedule AB1',.99,false,'Fines and penalties are non-deductible.',true);
+      else if(n.includes('entertainment')) set('Operating Expenses','Add Back / Restrict - Entertainment','Entertainment Review',.91,true,'Entertainment may be partially deductible; supporting details required.',true);
+      else if(n.match(/donation|gift|contribution/)) set('Operating Expenses','Review - Donation / Gift','Donation Schedule',.88,true,'Donation deductibility depends on approval and limits. Cash contributions to third parties (even coded as entertainment/greetings) are donation-type, not entertainment.',true);
+    }
+  }
+  else if(n.match(/sales|revenue|turnover|service income|fee income/)) set('Revenue','Taxable business income - S.4(a)','P&L Revenue',.98,false,'Business revenue credited to P&L.');
   else if(n.match(/progress billing|haulage income|freight income|consultation fee|ward charge|pharmacy sales/)) set('Revenue','Taxable business income - S.4(a)','Industry Revenue',.95,false,'Industry keyword mapped to revenue.',true);
   else if(n.match(/rental income/)) set('Other Income','Rental Income - Review source','Rental Income Schedule',.92,true,'Rental income needs source and tax disclosure review.',true);
   else if(n.match(/interest income|fixed deposit interest/)) set('Other Income','Interest Income - S.4(c)','HK-6 / Interest Income',.96,false,'Interest income is separately identified for tax disclosure.',true);
@@ -10840,20 +11214,20 @@ function malaysiaAuditAIMap(code,name,bal){
   else if(n.match(/receivable|debtor/)){
     const p=taxAgentCodePrefixClass(code,bal,n);
     if(p) set(p.classification,p.treat,p.schedule,Math.max(.9,p.confidence),p.query,p.reason,p.wp);
-    else if(Number(bal)<0) set('Current Liability','Balance Sheet - Current Liability','Other Creditors',.9,true,'Receivable/debtor wording has a credit closing balance; classified as other creditor until auditor confirms.',true);
-    else set('Current Asset','Balance Sheet - Current Asset','Other Debtors',.94,false,'Receivable wording mapped to current assets.');
+    else if(Number(bal)<0) set('Current Liability','Balance Sheet - Current Liability','Sundry creditors',.9,true,'Receivable/debtor wording has a credit closing balance; classified as sundry creditor until auditor confirms.',true);
+    else set('Current Asset','Balance Sheet - Current Asset','Sundry debtors',.94,false,'Receivable wording mapped to current assets.');
   }
+  else if(n.match(/\b(software|erp)\b/) && !n.match(/maintenance|subscription|support|customi[sz]e|qc service|licen[cs]e fee/)) set('Fixed Asset','CA Review - Schedule 3','Capital Allowance / FA Register',.9,true,'Named as a software/ERP purchase rather than a recurring fee -- likely a capital addition. Computer software/ERP generally qualifies for capital allowance (ICT equipment treatment); confirm self-developed vs purchased and claim CA rather than excluding it pending review by default.',true);
   else if(n.match(/fixed asset|property|plant|building|equipment|computer|office equipment|motor vehicle|furniture|renovation|signboard|capital work|trademark|goodwill/)) set('Fixed Asset','CA Review - Schedule 3','Capital Allowance / FA Register',.95,true,'Fixed asset should flow to FA/CA review and capital allowance schedule.',true);
   else if(n.match(/payable|creditor|accrual|accrued|sst|tax payable|short.*loan/)){
     const p=taxAgentCodePrefixClass(code,bal,n);
     if(p) set(p.classification,p.treat,p.schedule,Math.max(.9,p.confidence),p.query,p.reason,p.wp);
-    else if(Number(bal)>0) set('Current Asset','Balance Sheet - Current Asset','Other Debtors',.9,true,'Payable/creditor wording has a debit closing balance; classified as other debtor until auditor confirms.',true);
+    else if(Number(bal)>0) set('Current Asset','Balance Sheet - Current Asset','Sundry debtors',.9,true,'Payable/creditor wording has a debit closing balance; classified as sundry debtor until auditor confirms.',true);
     else set('Current Liability','Balance Sheet - Current Liability','BS Current Liabilities',.94,false,'Payable/accrual mapped to current liability.');
   }
   else if(n.match(/long.*loan|term loan|deferred tax/)) set('Non-Current Liability','Balance Sheet - Non-Current Liability','BS Non-Current Liabilities',.94,false,'Long-term obligation mapped to non-current liability.');
   else if(!n.match(/capital allowance|capital work|capital expenditure|working capital|capital gain/)&&n.match(/share capital|paid.up|\bcapital\b/)) set('Equity','Balance Sheet - Share Capital','Equity Schedule',.98,false,'Share capital mapped to equity.');
   else if(n.match(/retained|reserve|profit.*loss/)) set('Equity','Balance Sheet - Retained Earnings','Equity Schedule',.96,false,'Retained earnings and reserves mapped to equity.');
-  else if(codeHint){usedFallback=true;set(codeHint.classification,codeHint.treat,codeHint.schedule,codeHint.confidence,codeHint.query,codeHint.reason,codeHint.wp);}
   else if(bal<0){usedFallback=true;set('Revenue','Taxable business income - review','P&L Revenue',.72,true,'Credit balance without clear account name; review.');}
   // Once a name-based rule above has confidently classified this account,
   // capture what that means for its account-code prefix on THIS client --
@@ -10950,41 +11324,76 @@ function taxAgentCodePrefixClass(code,bal){
   const tradeCreditorPrefixes=['400'];
   const otherCreditorPrefixes=['405','410','430','440'];
   if(tradeDebtorPrefixes.includes(p3)){
-    if(side==='cr') return make('Current Liability','Other Creditors','Code '+p3+' is a trade debtor family but has a credit closing balance, so it is treated as an other creditor / credit-balance debtor.',.9);
-    return make('Current Asset','Trade Debtors','Code '+p3+' is the trade debtor family.',.92);
+    if(side==='cr') return make('Current Liability','Sundry creditors','Code '+p3+' is a trade debtor family but has a credit closing balance, so it is treated as a sundry creditor / credit-balance debtor.',.9);
+    return make('Current Asset','Trade debtors','Code '+p3+' is the trade debtor family.',.92);
   }
   if(otherDebtorPrefixes.includes(p3)){
-    if(side==='cr') return make('Current Liability','Other Creditors','Code '+p3+' is an other debtor/debtor-family account but has a credit closing balance, so it is treated as other creditor.',.9);
-    return make('Current Asset','Other Debtors','Code '+p3+' is an other debtor family.',.9);
+    if(side==='cr') return make('Current Liability','Sundry creditors','Code '+p3+' is a sundry debtor/debtor-family account but has a credit closing balance, so it is treated as sundry creditor.',.9);
+    return make('Current Asset','Sundry debtors','Code '+p3+' is a sundry debtor family.',.9);
   }
   if(tradeCreditorPrefixes.includes(p3)){
-    if(side==='dr') return make('Current Asset','Other Debtors','Code '+p3+' is a trade creditor family but has a debit closing balance, so it is treated as an other debtor / debit-balance creditor.',.9);
-    return make('Current Liability','Trade Creditors','Code '+p3+' is the trade creditor family.',.92);
+    if(side==='dr') return make('Current Asset','Sundry debtors','Code '+p3+' is a trade creditor family but has a debit closing balance, so it is treated as a sundry debtor / debit-balance creditor.',.9);
+    return make('Current Liability','Trade creditors','Code '+p3+' is the trade creditor family.',.92);
   }
   if(otherCreditorPrefixes.includes(p3)){
-    if(side==='dr') return make('Current Asset','Other Debtors','Code '+p3+' is an other creditor family but has a debit closing balance, so it is treated as other debtor.',.9);
-    return make('Current Liability','Other Creditors','Code '+p3+' is an other creditor family.',.9);
+    if(side==='dr') return make('Current Asset','Sundry debtors','Code '+p3+' is a sundry creditor family but has a debit closing balance, so it is treated as sundry debtor.',.9);
+    return make('Current Liability','Sundry creditors','Code '+p3+' is a sundry creditor family.',.9);
   }
   // Any OTHER code within a known leading digit's family (e.g. 320,
   // 350, 415, 460...) that isn't one of the specific sub-families
   // above -- still classify it broadly from the leading digit rather
   // than falling through to a name-keyword guess. Within the 4xx
-  // family specifically, treat any not-yet-specific code as "Other
-  // Creditors" per the confirmed convention (400 = Trade, the rest of
-  // 40x = Other) -- this is exactly the case that was previously
+  // family specifically, treat any not-yet-specific code as "Sundry
+  // creditors" per the confirmed convention (400 = Trade, the rest of
+  // 40x = Sundry) -- this is exactly the case that was previously
   // falling through to expense-keyword matching.
   if(FIRST_DIGIT_CLASS_MAP[firstDigit]){
     const [drCls,crCls]=FIRST_DIGIT_CLASS_MAP[firstDigit];
     if(firstDigit==='4'){
-      if(side==='dr') return make(drCls,'Other Debtors','Code '+p3+' falls in the 4xx liability family but carries a debit balance, so treated as other debtor.',.75);
-      return make(crCls,'Other Creditors','Code '+p3+' falls in the 4xx liability family (400=Trade Creditors confirmed; remaining 40x=Other Creditors).',.8);
+      if(side==='dr') return make(drCls,'Sundry debtors','Code '+p3+' falls in the 4xx liability family but carries a debit balance, so treated as sundry debtor.',.75);
+      return make(crCls,'Sundry creditors','Code '+p3+' falls in the 4xx liability family (400=Trade creditors confirmed; remaining 40x=Sundry creditors).',.8);
     }
     if(firstDigit==='3'){
-      if(side==='cr') return make(crCls,'Other Creditors','Code '+p3+' falls in the 3xx current-asset family but carries a credit balance, so treated as other creditor.',.75);
-      return make(drCls,'Other Debtors','Code '+p3+' falls in the 3xx current-asset family.',.8);
+      if(side==='cr') return make(crCls,'Sundry creditors','Code '+p3+' falls in the 3xx current-asset family but carries a credit balance, so treated as sundry creditor.',.75);
+      return make(drCls,'Sundry debtors','Code '+p3+' falls in the 3xx current-asset family.',.8);
     }
   }
   return null;
+}
+// P&L side code-prefix convention, validated against AILS SDN BHD's actual management
+// accounts (P&L and BS structure headers) -- covers the 5xx-9xx ranges that
+// FIRST_DIGIT_CLASS_MAP / taxAgentCodePrefixClass above does not, since a single leading
+// digit ('9') can't distinguish Admin (900) from Depreciation (910) from Director
+// Remuneration (930) etc. -- these need the full 3-digit prefix. Applied as a STANDARD
+// default (useful starting point for similarly-structured clients); the per-client
+// learning system (learnedCodeClass) still overrides this once the tax agent confirms
+// a different convention for a specific client.
+const PL_CODE_PREFIX_MAP={
+  '500':['Revenue','P&L Revenue','Taxable business income - S.4(a)',.9,false],
+  '520':['Revenue','P&L Revenue (contra)','Taxable business income - S.4(a)',.85,false],
+  '620':['Cost of Sales','P&L Cost of Sales','Allowable - S.33(1)',.88,false],
+  '621':['Cost of Sales','P&L Cost of Sales - Amortisation','Add Back - Amortisation (capital in nature; claim CA instead)',.85,false],
+  '625':['Cost of Sales','P&L Cost of Sales - R&D Staff Cost','Allowable - S.33(1); review for S.34A double deduction',.85,false],
+  '710':['Other Income','P&L Other Income - Interest','Interest Income - S.4(c)',.9,true],
+  '730':['Other Income','P&L Other Income - Disposal Gain/Loss','Review - capital vs revenue nature',.8,true],
+  '750':['Other Income','P&L Other Income','Taxable other income - review',.85,true],
+  '900':['Operating Expenses','P&L Admin & General Expenses','Allowable - S.33(1); review individual lines for private/capital nature',.82,true],
+  '910':['Operating Expenses','P&L Depreciation','Add Back - S.39(1)(b) Depreciation (claim capital allowance instead)',.92,false],
+  '920':['Operating Expenses','P&L Staff Cost (Admin)','Allowable - Employment cost',.88,false],
+  '930':['Operating Expenses','P&L Director Remuneration','Allowable / Director disclosure',.85,true],
+  '940':['Operating Expenses','P&L Sales & Distribution Cost','Allowable - S.33(1); review entertainment/gift sub-items',.8,true],
+  '950':['Operating Expenses','P&L Professional Cost','Allowable / review capital nature',.82,true],
+  '970':['Finance Costs','P&L Finance Cost','HP Interest - Deductible portion',.88,false],
+  '980':['Tax Expense','P&L Taxation','Below the line - not part of adjusted business income',.92,false]
+};
+function standardPLCodePrefixClass(code){
+  const s=String(code||'').trim();
+  const m=s.match(/^(\d{3})/);
+  if(!m) return null;
+  const row=PL_CODE_PREFIX_MAP[m[1]];
+  if(!row) return null;
+  const [classification,schedule,treat,confidence,query]=row;
+  return {classification,treat,schedule,confidence,query,reason:'Code prefix '+m[1]+'- matches the standard P&L account-code convention (validated against AILS SDN BHD management accounts).',wp:classification!=='Operating Expenses'};
 }
 function codeClassMeta(cls,confidence,query,reason){
   const meta={
@@ -11003,7 +11412,17 @@ function codeClassMeta(cls,confidence,query,reason){
 function learnCodePattern(code,classification){
   const s=String(code||'').trim(); if(!s||!classification) return;
   const key=tfClientKey();
-  const prefix=s.slice(0,1);
+  // BUGFIX: this used to record at 1-digit granularity ("1" from code "100"), which is far
+  // too broad -- a single leading digit can span completely different categories in the same
+  // client's chart of accounts (e.g. AILS: 100=Capital/Equity, 150=Retained Earnings/Equity,
+  // 160=Term Loan/Non-Current Liability -- all share digit "1"). Once "100" and "150" (both
+  // confidently Equity) auto-learned prefix "1" -> Equity from just 2 examples, that
+  // over-broad pattern then WRONGLY overrode "160" TERM LOAN's correct name-based match, since
+  // code-based classification is checked before name-matching (see malaysiaAuditAIMap).
+  // This function only ever runs automatically (not from a user-confirmed mapUpdateField
+  // action -- see the single call site above), so it needs to default to the safer, more
+  // specific 2-digit prefix rather than 1-digit.
+  const prefix=s.slice(0,2)||s.slice(0,1);
   TF_CODE_LEARNING[key]=TF_CODE_LEARNING[key]||{};
   TF_CODE_LEARNING[key][prefix]=TF_CODE_LEARNING[key][prefix]||{};
   TF_CODE_LEARNING[key][prefix][classification]=(TF_CODE_LEARNING[key][prefix][classification]||0)+1;
@@ -11019,11 +11438,36 @@ function learnCodePattern(code,classification){
 // at both 3-digit (e.g. "340") and 2-digit (e.g. "34") granularity so a
 // specific sub-category can be inferred, falling back to the broader
 // 2-digit pattern when a novel 3-digit prefix hasn't been seen yet.
+// BUGFIX: this client's chart of accounts hyphenates a SUB-FAMILY into the code itself --
+// e.g. 200-1010/200-1015 = Computer, 200-2010/200-2015 = Furniture, 200-3010/200-3015 =
+// Renovation, 200-4010 onward = Pantry/Other -- every one of those starts with the same raw
+// "200"/"20" characters, since the digits that actually distinguish them sit AFTER the
+// hyphen. Learning/looking up by a plain slice(0,3)/slice(0,2) of the raw code treats all of
+// them as one indistinguishable group, so 2 confirmed "Computer / ICT Equipment" examples
+// were enough to silently overwrite Furniture, Renovation, and Pantry Equipment sub-categories
+// too. This returns the most-specific-first list of lookup keys: for a hyphenated code,
+// "<before>-<first 2 digits after the hyphen>" (e.g. "200-10") ahead of the plain family
+// "<before>" (e.g. "200") as a broader fallback for clients whose numbering isn't this
+// granular. Non-hyphenated codes fall back to the previous plain 3-digit/2-digit slicing.
+function scheduleLearnPrefixes(code){
+  const s=String(code||'').trim(); if(!s) return [];
+  const hy=s.indexOf('-');
+  if(hy>0){
+    const before=s.slice(0,hy), after=s.slice(hy+1), sub2=after.slice(0,2);
+    // No broader "before-hyphen-only" fallback here on purpose: that fallback is exactly
+    // what let 2 confirmed Computer examples contaminate Furniture/Renovation/Pantry, since
+    // they all share "200" before their own hyphen. A specific sub-family that hasn't been
+    // seen yet should fall through to name-based classification, not borrow a sibling
+    // sub-family's answer.
+    return sub2.length===2?[before+'-'+sub2]:(before.length>=2?[before]:[]);
+  }
+  return [s.slice(0,3),s.slice(0,2)].filter(p=>p&&p.length>=2);
+}
 function learnSchedulePattern(code,classification,schedule){
   const s=String(code||'').trim(); if(!s||!classification||!schedule) return;
   const key=tfClientKey();
   TF_SCHEDULE_LEARNING[key]=TF_SCHEDULE_LEARNING[key]||{};
-  [s.slice(0,3),s.slice(0,2)].filter(p=>p&&p.length>=2).forEach(prefix=>{
+  scheduleLearnPrefixes(s).forEach(prefix=>{
     TF_SCHEDULE_LEARNING[key][prefix]=TF_SCHEDULE_LEARNING[key][prefix]||{};
     const bucket=TF_SCHEDULE_LEARNING[key][prefix];
     const combo=classification+'||'+schedule;
@@ -11035,9 +11479,7 @@ function learnedSchedulePrefixClass(code){
   const s=String(code||'').trim(); if(!s) return null;
   const key=tfClientKey();
   const store=TF_SCHEDULE_LEARNING[key]||{};
-  for(const plen of [3,2]){
-    const prefix=s.slice(0,plen);
-    if(prefix.length<plen) continue;
+  for(const prefix of scheduleLearnPrefixes(s)){
     const bucket=store[prefix];
     if(!bucket) continue;
     const entries=Object.entries(bucket).sort((a,b)=>b[1]-a[1]);
@@ -11046,7 +11488,7 @@ function learnedSchedulePrefixClass(code){
     if(count<2) continue; // require at least 2 confirmed examples before generalising from a prefix
     const [classification,schedule]=combo.split('||');
     const treat=classification==='Current Asset'?'Balance Sheet - Current Asset':classification==='Current Liability'?'Balance Sheet - Current Liability':classification==='Fixed Asset'?'CA Review - Schedule 3':'Balance Sheet';
-    return {classification,treat,schedule,confidence:.93,query:true,reason:`Learned from this client's own account-code pattern: accounts starting "${prefix}-" have been classified as ${schedule} ${count} time(s) so far. Confirm this one matches.`,wp:false};
+    return {classification,treat,schedule,confidence:.93,query:true,reason:`Learned from this client's own account-code pattern: accounts matching "${prefix}" have been classified as ${schedule} ${count} time(s) so far. Confirm this one matches.`,wp:false};
   }
   return null;
 }
@@ -11094,12 +11536,25 @@ function fsSyncRowsFromMappings(rows){
   rows.forEach(r=>{
     const m=exact.get(String(r.code||'')+'|'+String(r.name||'').toLowerCase())||byCode.get(String(r.code||''));
     if(!m) return;
-    const inferred=mapClassFromSchedule(m.schedule);
-    if(m.classification||inferred) r.classification=m.classification||inferred;
-    if(m.treat) r.taxTreat=m.treat;
-    if(m.schedule) r.schedule=m.schedule;
-    r.confirmed=!!m.confirmed||m.src==='USER'||r.confirmed;
-    r.reason=m.reason||r.reason||'Synced from confirmed AI Mapping.';
+    // BUGFIX: this function's own fallback reason text says "Synced from confirmed AI
+    // Mapping", but it was applying a mapping row's classification/schedule unconditionally
+    // -- including rows the AI Mapping screen itself has never had a person touch
+    // (src:'RULE', confirmed:false). That silently overwrote a freshly (and correctly)
+    // computed schedule with whatever stale value happened to be sitting in that snapshot,
+    // on every single render, regardless of whether it was ever actually confirmed there.
+    const trusted=!!m.confirmed||m.src==='USER';
+    if(trusted){
+      const inferred=mapClassFromSchedule(m.taxSchedule||m.schedule);
+      if(m.classification||inferred) r.classification=m.classification||inferred;
+      if(m.treat) r.taxTreat=m.treat;
+      const mSched=m.taxSchedule||m.schedule;
+      if(mSched){
+        r.taxSchedule=mSched;
+        r.schedule=tbResolveSubCategory(r.classification,mSched,r.name);
+      }
+      r.reason=m.reason||r.reason||'Synced from confirmed AI Mapping.';
+    }
+    r.confirmed=trusted||r.confirmed;
   });
   return rows;
 }
@@ -11111,12 +11566,12 @@ function fsBuildRows(force=false){
   // triggered from more places (AI Mapping edits, business allocation
   // edits), not just the original ledger-confirmation flow.
   if(!force&&src.length===0&&window._fsRows&&window._fsRows.length>0){
-    fsSyncRowsFromMappings(window._fsRows);window._fsRows.forEach(r=>{r.classification=fsModelAdjustedClass(r.classification);if(r.schedule) r.schedule=tbCanonicalSubCategory(r.schedule,(r.code||'')+' '+(r.name||''));});fsNormalizeBusinessRows(window._fsRows);return window._fsRows;
+    fsSyncRowsFromMappings(window._fsRows);window._fsRows.forEach(r=>{r.classification=fsModelAdjustedClass(r.classification);const raw=tbCanonicalSubCategory(r.taxSchedule||r.schedule,(r.code||'')+' '+(r.name||''));r.schedule=(r.confirmed&&r.schedule&&tbSubCategoryOptions(r.classification).includes(r.schedule))?r.schedule:tbResolveSubCategory(r.classification,raw,r.name);});fsNormalizeBusinessRows(window._fsRows);return window._fsRows;
   }
   if(!force&&window._fsRows&&window._fsRows.length===src.length){
     const savedTot=fsTotalDrCr(window._fsRows), srcTot=fsSourceClosingTotals(src);
     const totalsMatch=Math.abs(savedTot.dr-srcTot.dr)<.01&&Math.abs(savedTot.cr-srcTot.cr)<.01;
-    if(totalsMatch){fsSyncRowsFromMappings(window._fsRows);window._fsRows.forEach(r=>{r.classification=fsModelAdjustedClass(r.classification);if(r.schedule) r.schedule=tbCanonicalSubCategory(r.schedule,(r.code||'')+' '+(r.name||''));});fsNormalizeBusinessRows(window._fsRows);return window._fsRows;}
+    if(totalsMatch){fsSyncRowsFromMappings(window._fsRows);window._fsRows.forEach(r=>{r.classification=fsModelAdjustedClass(r.classification);const raw=tbCanonicalSubCategory(r.taxSchedule||r.schedule,(r.code||'')+' '+(r.name||''));r.schedule=(r.confirmed&&r.schedule&&tbSubCategoryOptions(r.classification).includes(r.schedule))?r.schedule:tbResolveSubCategory(r.classification,raw,r.name);});fsNormalizeBusinessRows(window._fsRows);return window._fsRows;}
     console.warn('[TaxFlow] Rebuilding TB rows because saved totals differ from confirmed ledger', {savedTot,srcTot});
     addAudit('System','TB','Rebuilt saved TB rows because totals differed from confirmed ledger source');
   }
@@ -11135,10 +11590,19 @@ function fsBuildRows(force=false){
     const map=malaysiaAuditAIMap(r.code,r.name,bal);
     const key=String(r.code||'')+'|'+String(r.name||'').toLowerCase();
     const old=Object.assign({},previous.get(key)||{},mappedCode.get(String(r.code||''))||{},mappedExact.get(key)||{});
-    return {idx:i+1,code:String(r.code||''),name:String(r.name||''),dr:ty.dr,cr:ty.cr,bal,tyBal:bal,tyDr:ty.dr,tyCr:ty.cr,lyBal,lyDr,lyCr,movementDr,movementCr,classification:fsModelAdjustedClass(old.classification||map.classification),taxTreat:old.taxTreat||map.treat,schedule:tbCanonicalSubCategory(old.schedule||map.schedule,(r.code||'')+' '+(r.name||'')),confidence:old.confidence||map.confidence,query:old.query??map.query,wp:old.wp||map.wp,reason:old.reason||map.reason,confirmed:!!old.confirmed,businessSource:old.businessSource||fsDefaultBusinessSource(r.name),businessManual:!!old.businessManual,rulings:taxRulingsFindMatch(r.name)};
+    const classification=fsModelAdjustedClass(old.classification||map.classification);
+    const rawTaxSchedule=tbCanonicalSubCategory((old.confirmed&&old.taxSchedule)||map.schedule,(r.code||'')+' '+(r.name||''));
+    // A carried-over schedule is only trusted as-is when it's a genuinely valid sub-category
+    // option for this classification (a real prior TB pick, manual or already-resolved) --
+    // anything else (a tax-schedule label like "HK-1 / Payroll", a stale value from before a
+    // classification-rule fix) is re-derived fresh via tbResolveSubCategory instead of shown
+    // verbatim. This is what makes stale/mismatched schedules self-correct on every render.
+    const carriedSchedule=tbCanonicalSubCategory(old.schedule,(r.code||'')+' '+(r.name||''));
+    const schedule=(old.confirmed&&carriedSchedule&&tbSubCategoryOptions(classification).includes(carriedSchedule))?carriedSchedule:tbResolveSubCategory(classification,rawTaxSchedule,r.name);
+    return {idx:i+1,code:String(r.code||''),name:String(r.name||''),dr:ty.dr,cr:ty.cr,bal,tyBal:bal,tyDr:ty.dr,tyCr:ty.cr,lyBal,lyDr,lyCr,movementDr,movementCr,classification,taxTreat:old.taxTreat||map.treat,schedule,taxSchedule:rawTaxSchedule,confidence:old.confidence||map.confidence,query:old.query??map.query,wp:old.wp||map.wp,reason:old.reason||map.reason,confirmed:!!old.confirmed,businessSource:old.businessSource||fsDefaultBusinessSource(r.name),businessManual:!!old.businessManual,rulings:taxRulingsFindMatch(r.name)};
   });
   fsSyncRowsFromMappings(window._fsRows);
-  window._fsRows.forEach(r=>{r.classification=fsModelAdjustedClass(r.classification);if(r.schedule) r.schedule=tbCanonicalSubCategory(r.schedule,(r.code||'')+' '+(r.name||''));});
+  window._fsRows.forEach(r=>{r.classification=fsModelAdjustedClass(r.classification);const raw=tbCanonicalSubCategory(r.taxSchedule||r.schedule,(r.code||'')+' '+(r.name||''));r.schedule=(r.confirmed&&r.schedule&&tbSubCategoryOptions(r.classification).includes(r.schedule))?r.schedule:tbResolveSubCategory(r.classification,raw,r.name);});
   fsNormalizeBusinessRows(window._fsRows);
   return window._fsRows;
 }
@@ -11153,7 +11617,19 @@ function fsBuildRows(force=false){
 // rows are left untouched.
 function tbForceReclassifyUnconfirmed(){
   const cleared=(window._fsRows||[]).filter(r=>!r.confirmed);
-  cleared.forEach(r=>{r.classification='';r.schedule='';});
+  const clearedCodes=new Set(cleared.map(r=>String(r.code||'')));
+  cleared.forEach(r=>{r.classification='';r.schedule='';r.taxSchedule='';});
+  // BUGFIX: fsBuildRows() merges an account's saved classification/schedule back in from
+  // window._fsMappingRows (a SEPARATE snapshot the AI Mapping screen saves) by matching
+  // code/name, BEFORE it ever looks at a freshly computed value -- clearing window._fsRows
+  // alone isn't enough, since that merge silently resurrects the exact stale value this
+  // button is meant to clear, even though the row still shows "Auto"/unconfirmed. Clear the
+  // matching mapping-row entries too, scoped to the same set of unconfirmed accounts (never
+  // touches anything the AI Mapping screen has marked src:'USER'/confirmed on its own).
+  (window._fsMappingRows||[]).forEach(m=>{
+    if(!m||m.src==='USER'||!clearedCodes.has(String(m.code||''))) return;
+    m.classification='';m.schedule='';m.taxSchedule='';
+  });
   fsBuildRows(true);
   tfSaveState();
   tfRefreshAllSchedules();
@@ -11227,7 +11703,11 @@ function fsUpdateClass(sel,idx){const r=(window._fsRows||[])[Number(idx)-1];if(r
   // clear it rather than silently keeping a mismatched value.
   if(r.schedule) r.schedule=tbCanonicalSubCategory(r.schedule,(r.code||'')+' '+(r.name||''));
   if(r.schedule&&!tbSubCategoryOptions(r.classification).includes(r.schedule)) r.schedule='';
-  r.reason='Manual FS classification selected by user. Full mapping learned for this client.';mapLearnApply(r.code,r.name,mapLearnPayload(r,{classification:r.classification}));tfSaveState();tfRefreshAllSchedules();}}
+  r.reason='Manual FS classification selected by user. Full mapping learned for this client.';mapLearnApply(r.code,r.name,mapLearnPayload(r,{classification:r.classification}));
+  const tr=tbPatchRowBadge(sel);
+  const subCell=tr?tr.querySelector('.tb-subcat-cell'):null;
+  if(subCell) subCell.innerHTML=tbSubCategoryCellHtml(r);
+  tfRequestRefreshAllSchedules();}}
 // Same underlying update as fsUpdateClass, but used from the BS/P&L
 // Detailed views specifically: since those are built from the same rows as
 // the Trial Balance, changing a classification here also changes it there.
@@ -11251,7 +11731,8 @@ function fsUpdateSchedule(sel,idx){
     r.reason='Manual sub-category selected by user. Full mapping learned for this client.';
     mapLearnApply(r.code,r.name,mapLearnPayload(r,{classification:r.classification,schedule:r.schedule}));
     if(r.code&&r.classification&&r.schedule) learnSchedulePattern(r.code,r.classification,r.schedule);
-    tfSaveState();tfRefreshAllSchedules();
+    tbPatchRowBadge(sel);
+    tfRequestRefreshAllSchedules();
   }
 }
 // Sub-category options, dependent on the top-level classification chosen
@@ -11319,8 +11800,7 @@ function fsSetBizAlloc(idx,key,val){
   const nonZero=Object.entries(r._bizAlloc).filter(([,v])=>Math.abs(lgNum(v))>0.005);
   if(nonZero.length===1){r.businessSource=nonZero[0][0];r.businessManual=true;}
   r.confirmed=true;
-  tfSaveState();
-  tfRefreshAllSchedules();
+  tfRequestRefreshAllSchedules();
 }
 function fsBizMismatch(r, amt){
   const b=r._bizSplit;
@@ -11543,7 +12023,7 @@ function fsExport(){
   }
 }
 function fsBuildMappingRows(rows){
-  return rows.map((r,i)=>({idx:r.idx??(i+1),code:r.code,name:r.name,amt:Math.abs(r.bal),classification:r.classification,src:r.confirmed?'USER':'RULE',treat:r.taxTreat,schedule:r.schedule,reason:r.reason,wp:r.wp,conf:r.confirmed?.99:r.confidence,query:r.query||String(r.taxTreat).includes('Review'),bizAlloc:r.bizAlloc,businessSource:r.businessSource,rulings:r.rulings||[]}));
+  return rows.map((r,i)=>{const ts=r.taxSchedule||r.schedule;return {idx:r.idx??(i+1),code:r.code,name:r.name,amt:Math.abs(r.bal),classification:r.classification,src:r.confirmed?'USER':'RULE',treat:r.taxTreat,schedule:ts,taxSchedule:ts,reason:r.reason,wp:r.wp,conf:r.confirmed?.99:r.confidence,query:r.query||String(r.taxTreat).includes('Review'),bizAlloc:r.bizAlloc,businessSource:r.businessSource,rulings:r.rulings||[]};});
 }
 function fsSignedAmount(r,year='ty'){
   const dr=year==='ly'?(r.lyDr||0):(r.tyDr||r.dr||0), cr=year==='ly'?(r.lyCr||0):(r.tyCr||r.cr||0);
@@ -12308,6 +12788,36 @@ function tbClearColumnFilter(col){
 // from refreshing, and can't turn into an error the user sees.
 let TF_REFRESH_SCHEDULES_RUNNING=false;
 let TF_REFRESH_SCHEDULES_PENDING=false;
+// PERF: renderFinstmt() (the Trial Balance/BS/P&L table rebuild inside
+// tfRefreshAllSchedules) measures at 400-470ms on this client's real 340-row ledger --
+// almost entirely DOM construction cost (rebuilding several hundred-row HTML tables),
+// not the underlying data computation (which is ~25ms). Calling it synchronously on
+// EVERY single dropdown pick means working through several misclassified accounts in a
+// row stacks up multiple ~400ms blocking renders back-to-back with nothing to coalesce
+// them, which is what shows up as the app "hanging" while fixing a batch of accounts.
+// This debounces the trigger so a fresh render only fires once, ~220ms after the last
+// edit in a burst -- the account's own picked value still updates in memory instantly
+// (that part was never slow), only the expensive derived-totals re-render is deferred
+// and coalesced. Reserved for per-field edit handlers (dropdown/input onchange); explicit
+// one-off bulk actions (reset, force-reclassify) keep calling tfRefreshAllSchedules()
+// directly since those aren't fired in rapid succession the way field edits are.
+let TF_REFRESH_DEBOUNCE_TIMER=null;
+function tfFlushPendingSave(){
+  if(TF_REFRESH_DEBOUNCE_TIMER==null) return;
+  clearTimeout(TF_REFRESH_DEBOUNCE_TIMER);
+  TF_REFRESH_DEBOUNCE_TIMER=null;
+  // Synchronous safety net here specifically: this only runs when actually leaving
+  // (navigation or tab close), not on every edit, so paying the ~40ms cost once is a
+  // fine trade for the guarantee that it completes before the page is gone -- an
+  // in-flight tfSaveStateAsync() write is NOT guaranteed to finish in time for that.
+  tfSaveState();
+  tfRefreshAllSchedules();
+}
+function tfRequestRefreshAllSchedules(delay=220){
+  clearTimeout(TF_REFRESH_DEBOUNCE_TIMER);
+  TF_REFRESH_DEBOUNCE_TIMER=setTimeout(()=>{TF_REFRESH_DEBOUNCE_TIMER=null;tfSaveStateAsync();tfRefreshAllSchedules();},delay);
+}
+window.addEventListener('beforeunload',tfFlushPendingSave);
 function tfRefreshAllSchedules(){
   // Defensive guard: if something downstream (directly or through an
   // event this triggers) calls this again while it's still running,
@@ -12319,12 +12829,20 @@ function tfRefreshAllSchedules(){
   try{
     tbSyncLiveFilterState();
     const safe=(fn)=>{ try{ if(typeof fn==='function') fn(); }catch(e){ console.warn('[tfRefreshAllSchedules]', e); } };
-    safe(renderFinstmt);
+    // renderFinstmt and renderMapping are the two expensive renders here (each rebuilds
+    // several hundred-row tables) -- measured together as the majority of this function's
+    // cost on a real client ledger, showing up as the app "hanging" on every single field
+    // edit. Both panels already get a fresh render via lazyRender() whenever the user
+    // actually navigates to them (see goTo()/lazyRender()), so it's safe to skip rebuilding
+    // them here when they're not the panel currently on screen -- no staleness risk, since
+    // nothing reads stale data from them while they're not visible.
+    const panelActive=(id)=>{ const el=document.getElementById('panel-'+id); return !!el && el.classList.contains('active'); };
     safe(buildTC);
     safe(buildTCSchedules);
     safe(buildTCSchedulesFull);
     safe(renderAnalysisOfAccount);
-    safe(renderMapping);
+    if(panelActive('finstmt')) safe(renderFinstmt);
+    if(panelActive('mapping')) safe(renderMapping);
     safe(renderCASummary);
     safe(renderFA);
     safe(renderTaxStatus);
@@ -12335,6 +12853,22 @@ function tfRefreshAllSchedules(){
       setTimeout(tfRefreshAllSchedules,0);
     }
   }
+}
+// Shared Sub-Category cell markup -- used both by the full table render below AND by
+// fsUpdateClass's instant single-row patch, so there's one source of truth instead of
+// two copies that can drift.
+function tbSubCategoryCellHtml(r){
+  return tbHasSubCategorySetup(r.classification)?`<select class="fi" style="font-size:11px;padding:4px 6px;width:100%;min-width:0;max-width:100%" onchange="fsUpdateSchedule(this,'${r.idx}')"><option value="">\u2014 select \u2014</option>${tbSubCategoryOptions(r.classification).map(s=>`<option value="${tfEsc(s)}" ${r.schedule===s?'selected':''}>${tfEsc(s)}</option>`).join('')}${r.schedule&&!tbSubCategoryOptions(r.classification).includes(r.schedule)?`<option value="${tfEsc(r.schedule)}" selected>${tfEsc(r.schedule)}</option>`:''}</select>`:`<span style="color:var(--t4);font-size:11px">\u2014</span>`;
+}
+// PERF: patches just the ONE row the user touched (its Status badge, "Auto"->"Manual")
+// directly in the DOM, instead of waiting for the debounced full-table render to reach
+// it. That render still runs shortly after (to keep totals/other tabs correct), but the
+// user sees their own click reflected in well under a millisecond instead of ~220ms+.
+function tbPatchRowBadge(sel){
+  const tr=sel&&sel.closest?sel.closest('tr'):null;
+  const badge=tr?tr.querySelector('.badge'):null;
+  if(badge){badge.textContent='Manual';badge.className='badge b-green';}
+  return tr;
 }
 function renderFinstmt(){
   tbSyncLiveFilterState();
@@ -12399,7 +12933,7 @@ function renderFinstmt(){
       <td class="r">${r.lyDr?fsMoney(r.lyDr):'-'}</td><td class="r">${r.lyCr?fsMoney(r.lyCr):'-'}</td>
       <td class="r">${r.bal>0?fsMoney(r.bal):'-'}</td><td class="r">${r.bal<0?fsMoney(-r.bal):'-'}</td>
       <td><select class="fi" style="font-size:11px;padding:4px 6px;width:100%;min-width:0" onchange="fsUpdateClass(this,'${r.idx}')">${fsClassOptionsForRow(cls,r).map(c=>`<option value="${c}" ${r.classification===c?'selected':''}>${c}</option>`).join('')}</select></td>
-      <td>${tbHasSubCategorySetup(r.classification)?`<select class="fi" style="font-size:11px;padding:4px 6px;width:100%;min-width:0;max-width:100%" onchange="fsUpdateSchedule(this,'${r.idx}')"><option value="">\u2014 select \u2014</option>${tbSubCategoryOptions(r.classification).map(s=>`<option value="${tfEsc(s)}" ${r.schedule===s?'selected':''}>${tfEsc(s)}</option>`).join('')}${r.schedule&&!tbSubCategoryOptions(r.classification).includes(r.schedule)?`<option value="${tfEsc(r.schedule)}" selected>${tfEsc(r.schedule)}</option>`:''}</select>`:`<span style="color:var(--t4);font-size:11px">\u2014</span>`}</td>
+      <td class="tb-subcat-cell">${tbSubCategoryCellHtml(r)}</td>
       <td><span class="badge ${r.confirmed?'b-green':'b-blue'}">${r.confirmed?'Manual':'Auto'}</span></td>
     </tr>`).join('')}<tr class="tot" data-tb-search="__total__"><td colspan="3">TOTAL</td><td class="r">${fsMoney(lyDR)}</td><td class="r">${fsMoney(lyCR)}</td><td class="r">${fsMoney(dr)}</td><td class="r">${fsMoney(cr)}</td><td colspan="3" style="color:${diff<1&&lyDiff<1?'var(--green3)':'var(--red3)'}">${lyDiff<1?'LY BALANCED':'LY DIFF '+fsMoney(lyDiff)} &middot; ${diff<1?'TY BALANCED':'TY DIFF '+fsMoney(diff)}</td></tr></tbody>
   </table></div>`;
@@ -15831,7 +16365,7 @@ async function refreshClientsFromDB(){
 // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 const CDB_NAME    = 'TaxFlowClientDB';
-const CDB_VERSION = 3;
+const CDB_VERSION = 4;
 let   clientDB    = null;
 
 // â”€â”€ SCHEMA â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -15845,6 +16379,7 @@ let   clientDB    = null;
 // disposals        : one record per disposal per company per YA
 // taxComputed      : tax computation summary per company per YA
 // docFiles         : uploaded document fallback copies per company per YA
+// appState         : single-record async save of the active TB workflow (see tfSaveStateAsync)
 
 async function openClientDB() {
   if (clientDB) return clientDB;
@@ -15870,6 +16405,10 @@ async function openClientDB() {
         { name:'disposals',   key:'id', indexes:[{n:'tin_ya',k:'tin_ya',u:false}]},
         { name:'taxComputed', key:'id', indexes:[{n:'tin_ya',k:'tin_ya',u:false}]},
         { name:'docFiles',    key:'id', indexes:[{n:'tin',k:'tin',u:false},{n:'tin_ya',k:'tin_ya',u:false},{n:'docType',k:'docType',u:false}]},
+        // appState -- single-record store for the async TB workflow save path
+        // (tfSaveStateAsync/tfLoadState). Keyed 'main' since this mirrors the
+        // existing single-blob localStorage shape, not a per-client schema.
+        { name:'appState',    key:'key', indexes:[]},
       ];
       stores.forEach(s => {
         if (!db.objectStoreNames.contains(s.name)) {
@@ -19485,7 +20024,7 @@ async function testAPIConnection(){
 // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // INIT â€” runs on page load
 // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-(function init(){
+(async function init(){
   // Set theme
   let savedTheme='light';
   try{savedTheme=localStorage.getItem('taxflow_theme')||'light';}catch(e){}
@@ -19495,7 +20034,7 @@ async function testAPIConnection(){
   tfLoadLearning();
   noteRefLoadSetup();
   tbLoadSubCategorySetup();
-  const restored=tfLoadState();
+  const restored=await tfLoadState();
 
   // Render initial state
   try { updateTopbar(); } catch(e){}
