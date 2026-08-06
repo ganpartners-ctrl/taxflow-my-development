@@ -2061,23 +2061,54 @@ function tfBuildStateSnapshot(){
     workflow:{lgRows:tfPlainRows(window.lgRows||lgRows||[]),lgTransactions:LG_TRANSACTION_ROWS,lgRawHeaders:LG_RAW_HEADERS,fsRows:tfPlainRows(window._fsRows||[]),fsSavedRows:tfPlainRows(window._fsSavedRows||[]),workingPapers:WORKING_PAPERS,clientQueries:CLIENT_QUERY_ITEMS,deemedInterest:DEEMED_INTEREST_SCHEDULE,caWorkfile:CA_WORKFILE,mapMining:window._mapMining||[],fsOutputs:window._fsOutputs||null,fsConfirm:window._fsConfirm||null,fsMode:window._fsMode||'tb',fsBizSources:window._fsBizSources||null,fsBizView:window._fsBizView||'combined',admin:window.TF_ADMIN||null,masterAdmin:window.TF_MASTER_ADMIN||null}
   };
 }
+function tfUpdateLastSavedIndicator(){
+  window._tfLastSavedAt=new Date();
+  const label='Saved '+window._tfLastSavedAt.toLocaleTimeString();
+  document.querySelectorAll('.tf-last-saved').forEach(el=>{el.textContent=label;});
+}
+// Explicit, user-triggered save -- flushes any pending debounced edit immediately,
+// writes synchronously (so it's guaranteed complete before the notification fires,
+// unlike the background async save), and gives clear visible confirmation. Added
+// specifically because the automatic background save (by design) is silent, and after
+// losing work to a browser crash a person needs a real "yes, this is saved" moment they
+// can trust, not just an assumption that autosave caught it.
+function tfManualSave(){
+  clearTimeout(TF_REFRESH_DEBOUNCE_TIMER);
+  TF_REFRESH_DEBOUNCE_TIMER=null;
+  tfSaveState();
+  tfUpdateLastSavedIndicator();
+  if(window.showNotif) showNotif('success','Saved','Saved. Your Trial Balance, ledger, and P&L/BS work is stored on this device.');
+}
 function tfSaveState(){
   try{
     localStorage.setItem(TF_STATE_KEY,JSON.stringify(tfBuildStateSnapshot()));
+    tfUpdateLastSavedIndicator();
   }catch(e){console.warn('[TaxFlow] save state failed',e);}
 }
-// PERF: localStorage.setItem is synchronous and blocks the main thread for the full
-// duration of the write -- measured at ~40ms even after trimming the payload (see
+// PERF/MEMORY: localStorage.setItem is synchronous and blocks the main thread for the
+// full duration of the write -- measured at ~40ms even after trimming the payload (see
 // tfBuildStateSnapshot's fsMappingRows note). IndexedDB writes run off the main thread,
 // so this is what actually lets a routine field-edit save feel instant rather than just
 // "smaller". Used only for the debounced per-edit flush (tfRequestRefreshAllSchedules) --
 // every other one-off action in the app (uploads, resets, confirms) still calls the
 // synchronous tfSaveState() above, unchanged. Fire-and-forget: nothing in the app reads
 // this write's result directly, only tfLoadState() on the next page load.
+//
+// CRITICAL: this deliberately drops the raw transaction-level ledger (lgTransactions/
+// lgRawHeaders) from the payload -- on a real client that's 16,000+ rows, and it was
+// being fully re-serialized (and IndexedDB-structured-cloned) on EVERY single TB edit
+// via this hot path, which is the real cause of an Out-of-Memory browser crash during a
+// long editing session. That raw import data doesn't change while classifying accounts
+// -- it's only ever written once, right after upload -- so tfSaveState() (the full sync
+// save used by the upload/reset/confirm one-off actions) still captures it in full;
+// tfLoadState() backfills it from that save if this lighter one is what wins on reload.
 function tfSaveStateAsync(){
   try{
     const snap=tfBuildStateSnapshot();
-    cdbPut('appState',Object.assign({key:'main'},snap)).catch(e=>console.warn('[TaxFlow] async save failed, will retry on next edit',e));
+    snap.workflow.lgTransactions=[];
+    snap.workflow.lgRawHeaders=[];
+    snap.workflow._lgTransactionsOmitted=true;
+    cdbPut('appState',Object.assign({key:'main'},snap)).then(()=>tfUpdateLastSavedIndicator()).catch(e=>console.warn('[TaxFlow] async save failed, will retry on next edit',e));
   }catch(e){console.warn('[TaxFlow] async save failed',e);}
 }
 function tfApplyLoadedState(state){
@@ -2132,6 +2163,17 @@ async function tfLoadState(){
   }catch(e){console.warn('[TaxFlow] localStorage load failed',e);}
   const state=(idbState&&lsState)?((idbState.savedAt||'')>(lsState.savedAt||'')?idbState:lsState):(idbState||lsState);
   if(!state) return false;
+  // The async per-edit save path (tfSaveStateAsync) intentionally omits the raw
+  // transaction ledger to avoid re-serializing 16,000+ rows on every click. If that's
+  // the save that won on freshness, backfill the transaction data from the OTHER save
+  // (the full sync save always carries it) rather than leaving it empty.
+  if(state.workflow&&state.workflow._lgTransactionsOmitted){
+    const other=state===idbState?lsState:idbState;
+    if(other&&other.workflow&&Array.isArray(other.workflow.lgTransactions)&&other.workflow.lgTransactions.length){
+      state.workflow.lgTransactions=other.workflow.lgTransactions;
+      state.workflow.lgRawHeaders=other.workflow.lgRawHeaders||state.workflow.lgRawHeaders;
+    }
+  }
   try{
     tfApplyLoadedState(state);
     return true;
@@ -6980,21 +7022,21 @@ function renderMapping(){
   </select>
 </td>
       <td onclick="event.stopPropagation()">
-  <select class="fi" style="min-width:160px;padding:3px 6px;font-size:10px" onchange="mapUpdateField('${tfEsc(m.code)}','treat',this.value);mapAutoFillSchedule('${tfEsc(m.code)}',this.value)">
+  <select class="fi" style="min-width:118px;max-width:130px;padding:3px 4px;font-size:10px" onchange="mapUpdateField('${tfEsc(m.code)}','treat',this.value);mapAutoFillSchedule('${tfEsc(m.code)}',this.value)">
     <option value="">— select —</option>
     ${MAP_TREAT_OPTIONS.map(t=>`<option value="${tfEsc(t)}" ${m.treat===t?'selected':''}>${tfEsc(t)}</option>`).join('')}
   </select>
 </td>
       <td onclick="event.stopPropagation()">
-  <select class="fi" style="min-width:150px;padding:3px 6px;font-size:10px" onchange="mapUpdateField('${tfEsc(m.code)}','schedule',this.value)">
+  <select class="fi" style="min-width:118px;max-width:130px;padding:3px 4px;font-size:10px" onchange="mapUpdateField('${tfEsc(m.code)}','schedule',this.value)">
     <option value="">— select —</option>
-    ${MAP_SCHED_OPTIONS.map(s=>`<option value="${tfEsc(s)}" ${m.schedule===s?'selected':''}>${tfEsc(s)}</option>`).join('')}
-    ${m.schedule&&!MAP_SCHED_OPTIONS.includes(m.schedule)?`<option value="${tfEsc(m.schedule)}" selected>${tfEsc(m.schedule)}</option>`:''}
+    ${tbSubCategoryOptions(m.classification).map(s=>`<option value="${tfEsc(s)}" ${m.schedule===s?'selected':''}>${tfEsc(s)}</option>`).join('')}
+    ${m.schedule&&!tbSubCategoryOptions(m.classification).includes(m.schedule)?`<option value="${tfEsc(m.schedule)}" selected>${tfEsc(m.schedule)}</option>`:''}
   </select>
 </td>
       <td onclick="event.stopPropagation()" style="text-align:center">${m.schedule?`<span class="badge b-blue" style="cursor:pointer" title="Click to review or change note numbering" onclick="openNoteRefSetup('${tfEsc(m.schedule).replace(/'/g,"\\'")}')">${NOTE_REF_STYLE==='alpha'?'':'Note '}${tfEsc(noteRefFor(m.schedule))}</span>`:'<span style="color:var(--t3);font-size:10px">—</span>'}</td>
       <td onclick="event.stopPropagation()" style="text-align:center">${(m.rulings&&m.rulings.length)?m.rulings.map(rule=>`<span class="badge ${rule.requiresApproval?'b-amber':'b-purple'}" style="cursor:pointer;margin:1px" title="${tfEsc(rule.name)}" onclick="openRulingDetail('${rule.id}','${tfEsc(m.code)}')">${tfEsc(rule.name.length>22?rule.name.slice(0,20)+'\u2026':rule.name)}</span>`).join(''):'<span style="color:var(--t3);font-size:10px">—</span>'}</td>
-      ${bizList.map(b=>`<td class="r" onclick="event.stopPropagation()"><input type="number" step="0.01" value="${alloc[b.key]!==''&&alloc[b.key]!=null?Number(alloc[b.key]).toFixed(2):''}" placeholder="-" style="width:88px;text-align:right;padding:3px 5px;font-size:10px;border:1px solid var(--line2);border-radius:4px;background:var(--bg2);font-family:'IBM Plex Mono',monospace" onchange="fsSetBizAlloc('${m.idx}','${tfEsc(b.key)}',this.value);renderMapping()"></td>`).join('')}
+      ${bizList.map(b=>`<td class="r" onclick="event.stopPropagation()"><input type="number" step="0.01" value="${alloc[b.key]!==''&&alloc[b.key]!=null?Number(alloc[b.key]).toFixed(2):''}" placeholder="-" style="width:68px;text-align:right;padding:3px 4px;font-size:10px;border:1px solid var(--line2);border-radius:4px;background:var(--bg2);font-family:'IBM Plex Mono',monospace" onchange="fsSetBizAlloc('${m.idx}','${tfEsc(b.key)}',this.value);renderMapping()"></td>`).join('')}
       <td>${posted?'<span class="badge b-green">Posted</span>':'<span class="badge b-gray">Not posted</span>'}</td>
       <td>${m.query?'<span class="badge b-amber">Required</span>':'<span class="badge b-blue">Optional</span>'}</td>
       <td style="display:flex;gap:4px">
@@ -7412,7 +7454,7 @@ function mapAllAccounts(){
         classification:saved.classification||r.classification||learned.classification||map.classification,
         src:saved.src||learned.src||(r.confirmed?'USER':'RULE'),
         treat:saved.treat||r.taxTreat||learned.treat||map.treat,
-        schedule:tbCanonicalSubCategory(saved.schedule||r.schedule||learned.schedule||map.schedule,(r.code||'')+' '+(r.name||'')),
+        schedule:tbResolveSubCategory(saved.classification||r.classification||learned.classification||map.classification,saved.schedule||r.schedule||learned.schedule||map.schedule,r.name),
         query:saved.query??r.query??learned.query??map.query,
         conf:saved.conf||r.confidence||learned.confidence||map.confidence,
         wp:saved.wp??learned.wp??map.wp
@@ -11936,13 +11978,14 @@ function fsApplyModuleMode(mode){
   const m=map[mode]||map.tb;
   if(title) title.textContent=m[0];
   if(sub) sub.textContent=m[1];
-  acts.innerHTML=mode==='tb'
+  const saveBlock=`<button class="btn btn-ghost btn-sm" onclick="tfManualSave()" title="Save now">Save</button><button class="btn btn-ghost btn-sm" onclick="tfExportFullBackup()" title="Download a full backup file">Backup</button><span class="tf-last-saved" style="font-size:11px;color:var(--t3);margin-right:6px;white-space:nowrap">${window._tfLastSavedAt?('Saved '+window._tfLastSavedAt.toLocaleTimeString()):'Not saved yet'}</span>`;
+  acts.innerHTML=saveBlock+(mode==='tb'
     ? `<button class="btn btn-ghost btn-sm" onclick="fsExport()">Export TB</button><button class="btn btn-success btn-sm" onclick="fsConfirmTB()">Confirm TB -> P&L</button>`
     : mode==='bs'
       ? `<button class="btn btn-ghost btn-sm" onclick="fsExport()">Export BS</button><button class="btn btn-primary btn-sm" onclick="fsConfirmBS()">Confirm BS -> AI Mapping</button>`
       : mode==='aje'
         ? `<button class="btn btn-ghost btn-sm" onclick="fsAddAJE()">AJE</button>`
-        : `<button class="btn btn-ghost btn-sm" onclick="fsExport()">Export P&L</button><button class="btn btn-success btn-sm" onclick="fsConfirmPL()">Confirm P&L -> BS</button>`;
+        : `<button class="btn btn-ghost btn-sm" onclick="fsExport()">Export P&L</button><button class="btn btn-success btn-sm" onclick="fsConfirmPL()">Confirm P&L -> BS</button>`);
   deskInjectPanelControls('finstmt');
   const tabs=document.getElementById('fs-tabs');
   const showOnly=(ids)=>{
@@ -12023,7 +12066,7 @@ function fsExport(){
   }
 }
 function fsBuildMappingRows(rows){
-  return rows.map((r,i)=>{const ts=r.taxSchedule||r.schedule;return {idx:r.idx??(i+1),code:r.code,name:r.name,amt:Math.abs(r.bal),classification:r.classification,src:r.confirmed?'USER':'RULE',treat:r.taxTreat,schedule:ts,taxSchedule:ts,reason:r.reason,wp:r.wp,conf:r.confirmed?.99:r.confidence,query:r.query||String(r.taxTreat).includes('Review'),bizAlloc:r.bizAlloc,businessSource:r.businessSource,rulings:r.rulings||[]};});
+  return rows.map((r,i)=>({idx:r.idx??(i+1),code:r.code,name:r.name,amt:Math.abs(r.bal),classification:r.classification,src:r.confirmed?'USER':'RULE',treat:r.taxTreat,schedule:r.schedule,taxSchedule:r.taxSchedule||r.schedule,reason:r.reason,wp:r.wp,conf:r.confirmed?.99:r.confidence,query:r.query||String(r.taxTreat).includes('Review'),bizAlloc:r.bizAlloc,businessSource:r.businessSource,rulings:r.rulings||[]}));
 }
 function fsSignedAmount(r,year='ty'){
   const dr=year==='ly'?(r.lyDr||0):(r.tyDr||r.dr||0), cr=year==='ly'?(r.lyCr||0):(r.tyCr||r.cr||0);
@@ -19701,6 +19744,81 @@ function showDuplicateWarning(type, existing, onForce, onCancel){
 // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // API SETTINGS
 // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
+// â”€â”€ FULL BACKUP / RESTORE â”€â”€ everything the app stores, in one portable file â”€â”€â”€â”€â”€
+// Browser storage (localStorage + IndexedDB) is tied to the exact address the app is
+// opened at -- it survives a new file being deployed to that same address, but NOT
+// clearing browser data, switching machines, or eventually moving to a different
+// hosted address (a different origin starts with completely empty storage). This is
+// the safety net for those cases: a single file the user keeps themselves, containing
+// every client's full record (profile, directors, shareholders, CA/HP assets,
+// disposals, computed tax, uploaded documents) plus the active TB/ledger/P&L/BS
+// workflow, the AI learning caches, and any Sub-Category/Note-Reference customization.
+const CDB_ALL_STORES=['clients','yearAssessments','directors','shareholders','addBacks','caAssets','hpAssets','disposals','taxComputed','docFiles'];
+async function tfExportFullBackup(){
+  try{
+    if(window.showNotif) showNotif('success','Backup','Preparing backupâ€¦ this may take a few seconds for a large client list.');
+    const workflow=tfBuildStateSnapshot();
+    const clientDB={};
+    for(const store of CDB_ALL_STORES){ clientDB[store]=await cdbGetAll(store); }
+    const backup={
+      backupVersion:1,exportedAt:new Date().toISOString(),app:'TaxFlow MY',
+      workflow,clientDB,
+      learning:{code:TF_CODE_LEARNING,schedule:TF_SCHEDULE_LEARNING},
+      subCategorySetup:TB_SUBCATEGORY_CUSTOM,
+      noteRefSetup:{style:NOTE_REF_STYLE,custom:NOTE_REF_CUSTOM},
+    };
+    const json=JSON.stringify(backup);
+    const blob=new Blob([json],{type:'application/json'});
+    const url=URL.createObjectURL(blob);
+    const stamp=new Date().toISOString().slice(0,19).replace(/[:T]/g,'-');
+    const a=document.createElement('a');
+    a.href=url;a.download=`taxflow-backup-${stamp}.json`;
+    document.body.appendChild(a);a.click();a.remove();
+    URL.revokeObjectURL(url);
+    if(window.showNotif) showNotif('success','Saved',`Backup downloaded (${(json.length/1024/1024).toFixed(1)} MB, ${clientDB.clients.length} client(s)). Keep this file somewhere safe outside the browser.`,6000);
+  }catch(e){
+    console.error('[TaxFlow] backup export failed',e);
+    if(window.showNotif) showNotif('error','Error','Backup failed: '+e.message);
+  }
+}
+function tfTriggerRestoreBackup(){
+  if(!confirm('Restoring a backup will overwrite your current client list and active workflow with what\'s in the backup file. This cannot be undone. Continue?')) return;
+  const input=document.createElement('input');
+  input.type='file';input.accept='.json,application/json';
+  input.onchange=(e)=>{ const file=e.target.files&&e.target.files[0]; if(file) tfRestoreFromBackupFile(file); };
+  input.click();
+}
+async function tfRestoreFromBackupFile(file){
+  try{
+    const text=await file.text();
+    const backup=JSON.parse(text);
+    if(!backup||typeof backup!=='object'||!backup.workflow) throw new Error('This file doesn\'t look like a TaxFlow backup.');
+    if(backup.clientDB){
+      for(const store of CDB_ALL_STORES){
+        const records=backup.clientDB[store];
+        if(Array.isArray(records)) for(const rec of records) await cdbPut(store,rec);
+      }
+    }
+    if(backup.learning){
+      if(backup.learning.code) TF_CODE_LEARNING=backup.learning.code;
+      if(backup.learning.schedule) TF_SCHEDULE_LEARNING=backup.learning.schedule;
+      tfSaveLearning();
+    }
+    if(backup.subCategorySetup){ Object.assign(TB_SUBCATEGORY_CUSTOM,backup.subCategorySetup); tbSaveSubCategorySetup(); }
+    if(backup.noteRefSetup){
+      if(backup.noteRefSetup.style) NOTE_REF_STYLE=backup.noteRefSetup.style;
+      if(backup.noteRefSetup.custom) Object.assign(NOTE_REF_CUSTOM,backup.noteRefSetup.custom);
+      noteRefSaveSetup();
+    }
+    tfApplyLoadedState(backup.workflow);
+    tfSaveState();
+    if(window.showNotif) showNotif('success','Saved','Backup restored. Reloadingâ€¦');
+    setTimeout(()=>location.reload(),1200);
+  }catch(e){
+    console.error('[TaxFlow] restore failed',e);
+    if(window.showNotif) showNotif('error','Error','Restore failed: '+e.message);
+  }
+}
 function openAPISettings(){
   const modal=document.getElementById('apiSettingsModal');
   modal.style.display='flex';
@@ -20456,7 +20574,9 @@ table.tbl .bal td{background:var(--bld)!important;font-weight:700;}
 <!-- BOTTOM BAR -->
 <div class="bot">
   <div class="bot-info" id="bot-info">Upload your general ledger PDF or Excel file to begin</div>
-  <div style="margin-left:auto;display:flex;gap:8px">
+  <div style="margin-left:auto;display:flex;gap:8px;align-items:center">
+    <span class="tf-last-saved" style="font-size:11px;color:var(--t3);white-space:nowrap"></span>
+    <button class="btn btn-gh" onclick="tfManualSave()" title="Save now">Save</button>
     <button class="btn btn-gh" id="bot-back" onclick="LedgerModule.stepBack()" style="display:none">â† Back</button>
     <button class="btn btn-pr" id="bot-next" onclick="LedgerModule.stepNext()" disabled>Next â†’</button>
   </div>
@@ -20508,6 +20628,15 @@ table.tbl .bal td{background:var(--bld)!important;font-weight:700;}
       <div style="font-size:11px;color:var(--t3);margin-bottom:8px">Define your own list of sub-categories (e.g. Fixed Asset types, Current Asset types) shown in the Trial Balance's Sub-Category dropdown.</div>
       <button onclick="closeAPISettings();openSubCategorySetup()" class="btn btn-ghost btn-sm">Edit Sub-Category Lists</button>
       <button onclick="closeAPISettings();openNoteRefSetup()" class="btn btn-ghost btn-sm">Edit Note References</button>
+    </div>
+
+    <div style="margin-bottom:18px;padding:10px 12px;background:var(--bg3);border-radius:7px">
+      <div style="font-size:11px;font-weight:700;color:var(--t3);text-transform:uppercase;letter-spacing:.5px;margin-bottom:6px">Full Backup</div>
+      <div style="font-size:11px;color:var(--t3);margin-bottom:8px">Download every client's full data (profiles, ledgers, P&L/BS, CA/HP, tax computations) as one file you keep yourself. This is your protection if browser storage is ever cleared, you switch machines, or the app eventually moves to a different address.</div>
+      <div style="display:flex;gap:8px">
+        <button onclick="tfExportFullBackup()" class="btn btn-primary btn-sm">Download Full Backup</button>
+        <button onclick="tfTriggerRestoreBackup()" class="btn btn-ghost btn-sm">Restore From Backup</button>
+      </div>
     </div>
 
     <div style="display:flex;gap:8px;justify-content:flex-end">
