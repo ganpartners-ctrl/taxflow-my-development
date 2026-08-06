@@ -1815,18 +1815,18 @@ function taxRulingsFindMatch(name){
   return TAX_RULINGS_REGISTRY.filter(rule=>rule.detectKeywords.test(n)&&(!rule.excludeKeywords||!rule.excludeKeywords.test(n)));
 }
 const TB_SUBCATEGORY_DEFAULT={
-  'Current Asset':['Trade Debtors','Other Debtors','Deposits & Prepayments','Cash and Cash Equivalent','Inventories'],
-  'Current Liability':['Trade Creditors','Other Creditors','Provision / Accrual','Provision for Taxation','Deposit / Advance Received','HP Creditor (Short Term)','Loan (Short Term)'],
-  'Non-Current Liability':['HP Creditor (Long Term)','Loan (Long Term)'],
+  'Current Asset':['Trade debtors','Sundry debtors','Cash in hand and cash at bank','Other current assets'],
+  'Current Liability':['Loans','Trade creditors','Sundry creditors','Other current Liabilities'],
+  'Non-Current Liability':['Loans','Other long term liabilities'],
   'Non-Current Asset':['Investments','Other Non-Current Asset'],
-  'Fixed Asset':['Property / Building','Plant & Machinery','Motor Vehicle','Furniture & Fittings','Computer / ICT Equipment','Office Equipment','Renovation','Capital Work in Progress'],
-  'Revenue':['Sales / Trading Income','Service Income','Other Operating Revenue'],
-  'Cost of Sales':['Direct Material','Direct Labour','Subcontractor','Other Direct Cost'],
-  'Operating Expenses':['Administrative Expenses','Selling & Distribution Expenses','Other Operating Expenses'],
-  'Other Income':['Interest Income','Rental Income','Gain on Disposal','Miscellaneous Income'],
+  'Fixed Asset':['Motor vehicle','Land and buildings','Other fixed assets'],
+  'Revenue':['Sales/Turnover'],
+  'Cost of Sales':['Purchases','Cost of production'],
+  'Operating Expenses':['Interest','Professional, technical, management, legal fees',"Directors' fees",'Salaries and wages','Maintenance','Promotion and advertisement','Travelling and accommodation','Other expenditure'],
+  'Other Income':['Other Income'],
   'Finance Costs':['Bank Interest','HP Interest','Loan Interest'],
   'Finance Income':['Interest Income','Dividend Income'],
-  'Equity':['Share Capital','Retained Earnings','Other Equity'],
+  'Equity':['Paid up capital','Profit and loss appropriation account'],
   'Share Capital':['Ordinary Share Capital','Preference Share Capital'],
   'Retained Earnings':['Retained Earnings'],
 };
@@ -1841,12 +1841,11 @@ let TB_SUBCATEGORY_CUSTOM={};
 // numbering style in the Note Reference Setup screen.
 const NOTE_REF_STANDARD_ORDER=[
   'Revenue','Other Income','Profit Before Taxation','Taxation',
-  'Property / Building','Plant & Machinery','Motor Vehicle','Furniture & Fittings','Computer / ICT Equipment','Office Equipment','Renovation','Capital Work in Progress','Capital Allowance / FA Register',
-  'Inventories','Inventory (special account - BS & P&L)',
-  'Trade Debtors','Other Debtors','Deposits & Prepayments','Cash and Cash Equivalent','Cash and Bank',
-  'Share Capital','Retained Earnings',
-  'Trade Creditors','Other Creditors','Provision / Accrual','Provision for Taxation',
-  'HP Creditor (Short Term)','Loan (Short Term)','HP Creditor (Long Term)','Loan (Long Term)',
+  'Land and buildings','Motor vehicle','Other fixed assets','Capital Allowance / FA Register',
+  'Trade debtors','Sundry debtors','Cash in hand and cash at bank','Other current assets',
+  'Paid up capital','Profit and loss appropriation account',
+  'Trade creditors','Sundry creditors','Other current Liabilities',
+  'Loans','Other long term liabilities',
 ];
 const NOTE_REF_KEY='taxflow_note_ref_setup_v1';
 let NOTE_REF_STYLE='numeric'; // 'numeric' -> Note 1, 2, 3...  |  'alpha' -> a, b, c...
@@ -1946,33 +1945,23 @@ function tbSubCategoryOptions(classification){
 // are already a valid option by construction (the dropdown only ever offers valid ones).
 const TB_SUBCATEGORY_NAME_RULES={
   'Fixed Asset':[
-    [/\b(computer|laptop|notebook|server|printer|monitor|projector|scanner|iphone|phone|tablet|ipad|software|ict|pos|router|network|switch|firewall|ssd|ram|cpu|keyboard|mouse|nas|access\s*point|wifi|modem)\b/i,'Computer / ICT Equipment'],
-    [/\b(office\s+equipment|photocopier|fax|telephone\s+system|safe|cash\s+register|shredder|binding\s+machine|laminator|pantry)\b/i,'Office Equipment'],
-    [/\b(building|property|shoplot|shop\s*lot|factory|warehouse|land\b)\b/i,'Property / Building'],
-    [/\b(motor\s*vehicle|\bvan\b|\blorry\b|\bcar\b|\btruck\b)\b/i,'Motor Vehicle'],
-    [/\b(furniture|fitting)/i,'Furniture & Fittings'],
-    [/\brenovation|\breno\b/i,'Renovation'],
-    [/capital\s*work|\bwip\b|work\s*in\s*progress/i,'Capital Work in Progress'],
-    [/\b(plant|machin)/i,'Plant & Machinery'],
-    [/\bequipment\b/i,'Office Equipment'],
+    [/\bbuildings?\b|\bproperty\b|\bshop\s*lot\b|\bfactory\b|\bfactories\b|\bwarehouse\b|\bland\b/i,'Land and buildings'],
+    [/\bmotor\s*vehicles?\b|\bvans?\b|\blorr(?:y|ies)\b|\bcars?\b|\btrucks?\b/i,'Motor vehicle'],
   ],
   'Operating Expenses':[
-    [/\b(sales|market|advert|promotion|commission|freight.?out|delivery|distribution)\b/i,'Selling & Distribution Expenses'],
+    [/interest/i,'Interest'],
+    [/\bprofessional\b|\btechnical\b|\bmanagement\s*fee|\blegal\b|\bconsult(?:ant|ing)?\b|\baudit\b|\bsecretari(?:al|es)?\b|\btax\s*agent\b/i,'Professional, technical, management, legal fees'],
+    [/director/i,"Directors' fees"],
+    [/\bstaff\b|\bsalary\b|\bsalaries\b|\bwages?\b|\bepf\b|\bsocso\b|\beis\b|\bhrdf\b|\bbonus(?:es)?\b|\bang\s*pow\b|\ballowances?\b|\bovertime\b|\bot\b|\blabou?r\b|\bworkers?\b/i,'Salaries and wages'],
+    [/\bmaintenance\b|\brepairs?\b/i,'Maintenance'],
+    [/\badvert(?:isement|ising)?\b|\bpromotions?\b|\bmarketing\b/i,'Promotion and advertisement'],
+    [/\btravel(?:ling|ing)?\b|\baccommodations?\b|\bhotels?\b|\bmileage\b|\bflights?\b|\bairfares?\b/i,'Travelling and accommodation'],
   ],
-  'Revenue':[
-    [/\b(service|consult|fee\s*income)\b/i,'Service Income'],
-    [/\b(sales|trading|turnover)\b/i,'Sales / Trading Income'],
-  ],
+  'Revenue':[],
   'Cost of Sales':[
-    [/\b(staff|salary|salaries|wages|epf|socso|eis|hrdf|bonus|ang\s*pow|allowance|overtime|\bot\b|labour|labor|worker)\b/i,'Direct Labour'],
-    [/\b(material|raw)\b/i,'Direct Material'],
-    [/subcontract/i,'Subcontractor'],
+    [/\bpurchases?\b|\bmaterials?\b|\braw\b/i,'Purchases'],
   ],
-  'Other Income':[
-    [/interest/i,'Interest Income'],
-    [/rental/i,'Rental Income'],
-    [/disposal|gain/i,'Gain on Disposal'],
-  ],
+  'Other Income':[],
   'Finance Costs':[
     [/hire\s*purchase|\bhp\b/i,'HP Interest'],
     [/loan/i,'Loan Interest'],
@@ -1981,39 +1970,34 @@ const TB_SUBCATEGORY_NAME_RULES={
     [/dividend/i,'Dividend Income'],
   ],
   'Current Asset':[
-    [/deposit|prepay/i,'Deposits & Prepayments'],
-    [/\bcash\b|\bbank\b/i,'Cash and Cash Equivalent'],
-    [/inventor|stock/i,'Inventories'],
-    [/debtor|receivable/i,'Trade Debtors'],
+    [/\bcash\b|\bbank\b/i,'Cash in hand and cash at bank'],
+    [/debtor|receivable/i,'Sundry debtors'],
   ],
   'Current Liability':[
-    [/deposit|advance/i,'Deposit / Advance Received'],
-    [/hire\s*purchase|\bhp\b/i,'HP Creditor (Short Term)'],
-    [/loan/i,'Loan (Short Term)'],
-    [/provision.*tax|tax.*provision/i,'Provision for Taxation'],
-    [/accrual|provision/i,'Provision / Accrual'],
-    [/creditor|payable/i,'Trade Creditors'],
+    [/hire\s*purchase|\bhp\b/i,'Loans'],
+    [/loan/i,'Loans'],
+    [/creditor|payable/i,'Sundry creditors'],
   ],
   'Non-Current Liability':[
-    [/hire\s*purchase|\bhp\b/i,'HP Creditor (Long Term)'],
+    [/hire\s*purchase|\bhp\b|loan/i,'Loans'],
   ],
   'Non-Current Asset':[
     [/invest/i,'Investments'],
   ],
   'Equity':[
-    [/share|capital/i,'Share Capital'],
-    [/retain|reserve/i,'Retained Earnings'],
+    [/share|capital/i,'Paid up capital'],
+    [/retain|reserve|profit\s*and\s*loss/i,'Profit and loss appropriation account'],
   ],
 };
 // Last-resort default per classification when no name keyword matches -- always the most
 // generic / "Other ..." bucket already present in that classification's own option list.
 const TB_SUBCATEGORY_DEFAULT_FALLBACK={
-  'Fixed Asset':'Plant & Machinery','Operating Expenses':'Administrative Expenses',
-  'Revenue':'Other Operating Revenue','Cost of Sales':'Other Direct Cost',
-  'Other Income':'Miscellaneous Income','Finance Costs':'Bank Interest',
-  'Finance Income':'Interest Income','Current Asset':'Other Debtors',
-  'Current Liability':'Other Creditors','Non-Current Liability':'Loan (Long Term)',
-  'Non-Current Asset':'Other Non-Current Asset','Equity':'Other Equity',
+  'Fixed Asset':'Other fixed assets','Operating Expenses':'Other expenditure',
+  'Revenue':'Sales/Turnover','Cost of Sales':'Cost of production',
+  'Other Income':'Other Income','Finance Costs':'Bank Interest',
+  'Finance Income':'Interest Income','Current Asset':'Other current assets',
+  'Current Liability':'Other current Liabilities','Non-Current Liability':'Other long term liabilities',
+  'Non-Current Asset':'Other Non-Current Asset','Equity':'Profit and loss appropriation account',
 };
 function tbGuessSubCategory(classification,options,name){
   const rules=TB_SUBCATEGORY_NAME_RULES[classification];
@@ -7806,18 +7790,18 @@ function mapWPRef(m){
 // which is what feeds the existing per-client learning system (learnCodePattern /
 // learnSchedulePattern) so the same client's confirmed groups are remembered next time.
 const GROUP_ANCHOR_PATTERNS=[
-  {test:/\bcash\b|\bbank\b/i, category:'Current Asset', schedule:'Cash and Cash Equivalent', side:'any'},
-  {test:/trade\s*debtor/i, category:'Current Asset', schedule:'Trade Debtors', side:'dr'},
-  {test:/trade\s*creditor/i, category:'Current Liability', schedule:'Trade Creditors', side:'cr'},
-  {test:/\baccrual\b|\bprovision\b/i, category:'Current Liability', schedule:'Accruals and Provisions', side:'cr'},
-  {test:/deposit.*(paid|rental|utilit)|deposit\s*-/i, category:'Current Asset', schedule:'Deposits & Prepayments', side:'dr'},
-  {test:/deposit.*(received|advance)/i, category:'Current Liability', schedule:'Deposit / Advance Received', side:'cr'},
-  {test:/prepay/i, category:'Current Asset', schedule:'Deposits & Prepayments', side:'dr'},
-  {test:/inventor|stock/i, category:'Current Asset', schedule:'Inventories', side:'dr'},
-  {test:/hire\s*purchase|\bhp\b.*creditor/i, category:'Current Liability', schedule:'HP Creditor (Current)', side:'cr'},
-  {test:/term\s*loan/i, category:'Current Liability', schedule:'Term Loan (Current)', side:'cr'},
-  {test:/provision.*tax|tax.*provision/i, category:'Current Liability', schedule:'Provision for Taxation', side:'cr'},
-  {test:/staff\s*loan/i, category:'Current Asset', schedule:'Staff Loan', side:'dr'},
+  {test:/\bcash\b|\bbank\b/i, category:'Current Asset', schedule:'Cash in hand and cash at bank', side:'any'},
+  {test:/trade\s*debtor/i, category:'Current Asset', schedule:'Trade debtors', side:'dr'},
+  {test:/trade\s*creditor/i, category:'Current Liability', schedule:'Trade creditors', side:'cr'},
+  {test:/\baccrual\b|\bprovision\b/i, category:'Current Liability', schedule:'Other current Liabilities', side:'cr'},
+  {test:/deposit.*(paid|rental|utilit)|deposit\s*-/i, category:'Current Asset', schedule:'Other current assets', side:'dr'},
+  {test:/deposit.*(received|advance)/i, category:'Current Liability', schedule:'Other current Liabilities', side:'cr'},
+  {test:/prepay/i, category:'Current Asset', schedule:'Other current assets', side:'dr'},
+  {test:/inventor|stock/i, category:'Current Asset', schedule:'Other current assets', side:'dr'},
+  {test:/hire\s*purchase|\bhp\b.*creditor/i, category:'Current Liability', schedule:'Loans', side:'cr'},
+  {test:/term\s*loan/i, category:'Current Liability', schedule:'Loans', side:'cr'},
+  {test:/provision.*tax|tax.*provision/i, category:'Current Liability', schedule:'Other current Liabilities', side:'cr'},
+  {test:/staff\s*loan/i, category:'Current Asset', schedule:'Other current assets', side:'dr'},
   {test:/fixed\s*asset|property|plant|equipment|motor\s*vehicle|furniture|renovation/i, category:'Fixed Asset', schedule:'Capital Allowance / FA Register', side:'any'},
 ];
 // Groups account codes into runs sharing the same numeric "family" -- codes are grouped by
@@ -7851,16 +7835,16 @@ function proposeGroupBasedClassification(accounts){
     // no account literally says "trade debtor"). This is exactly the pattern described: a
     // large family of individually-named counterparty accounts under one code range. Infer
     // it from the SHAPE of the group instead of any single account's wording -- many members,
-    // balances consistently one-sided -- and default the whole group to Trade Debtors (mostly
-    // debit) or Trade Creditors (mostly credit), the same way the first account in such a
+    // balances consistently one-sided -- and default the whole group to Trade debtors (mostly
+    // debit) or Trade creditors (mostly credit), the same way the first account in such a
     // group conventionally sets the pattern for the rest.
     if(!anchor && members.length>=3){
       const drCount=members.filter(a=>Number(a.bal||a.tyBal||0)>=0).length;
       const crCount=members.length-drCount;
       const mostlyDr=drCount>=members.length*0.7;
       const mostlyCr=crCount>=members.length*0.7;
-      if(mostlyDr) anchor={category:'Current Asset',schedule:'Trade Debtors',side:'dr',_inferred:true};
-      else if(mostlyCr) anchor={category:'Current Liability',schedule:'Trade Creditors',side:'cr',_inferred:true};
+      if(mostlyDr) anchor={category:'Current Asset',schedule:'Trade debtors',side:'dr',_inferred:true};
+      else if(mostlyCr) anchor={category:'Current Liability',schedule:'Trade creditors',side:'cr',_inferred:true};
     }
     if(!anchor) return; // no recognisable signal or pattern in this group -- leave to name-based rules
     members.forEach((acct,idx)=>{
@@ -7875,33 +7859,33 @@ function proposeGroupBasedClassification(accounts){
         category=nameHit.category; schedule=nameHit.schedule;
         reason=`This account's own wording matches "${nameHit.schedule}".`;
       } else if(anchor._inferred){
-        // whole inferred sub-ledger group keeps the anchor's Trade Debtors/Creditors label --
+        // whole inferred sub-ledger group keeps the anchor's Trade debtors/creditors label --
         // that IS the point (every member is a counterparty, not just the first one) -- unless
         // this specific member's own balance direction disagrees with the group's dominant side.
         if(side!==anchor.side){
           category=side==='dr'?'Current Asset':'Current Liability';
-          schedule=side==='dr'?'Other Debtors':'Other Creditors';
+          schedule=side==='dr'?'Sundry debtors':'Sundry creditors';
           reason=`Balance direction (${side.toUpperCase()}) disagrees with the group's dominant side -- proposed as ${schedule} instead of the group default.`;
         }
       } else if(idx===0){
         // First (lowest-numbered) account in the group with no specific wording of its own --
         // defaults to the group's PRIMARY sub-type per the accountant's convention.
-        if(anchor.schedule==='Trade Debtors'||anchor.schedule==='Trade Creditors'){
+        if(anchor.schedule==='Trade debtors'||anchor.schedule==='Trade creditors'){
           category=anchor.category; schedule=anchor.schedule;
           reason=`First account in the ${prefix}xx group — defaults to the group's primary type (${anchor.schedule}) per standard chart-of-accounts convention.`;
         } else if(side==='dr'){
-          category='Current Asset'; schedule='Other Debtors';
-          reason=`No specific wording; debit balance within a ${prefix}xx group anchored by "${anchor.schedule}" — proposed as Other Debtors.`;
+          category='Current Asset'; schedule='Sundry debtors';
+          reason=`No specific wording; debit balance within a ${prefix}xx group anchored by "${anchor.schedule}" — proposed as Sundry debtors.`;
         } else {
-          category='Current Liability'; schedule='Other Creditors';
-          reason=`No specific wording; credit balance within a ${prefix}xx group anchored by "${anchor.schedule}" — proposed as Other Creditors.`;
+          category='Current Liability'; schedule='Sundry creditors';
+          reason=`No specific wording; credit balance within a ${prefix}xx group anchored by "${anchor.schedule}" — proposed as Sundry creditors.`;
         }
       } else if(anchor.side!=='any'){
         // Subsequent accounts in a debtor/creditor-anchored group without their own specific
-        // wording: side (Dr/Cr) decides Other Debtors vs Other Creditors, per the requested
+        // wording: side (Dr/Cr) decides Sundry debtors vs Sundry creditors, per the requested
         // priority order (code group -> Dr/Cr -> name).
-        if(side==='dr'){ category='Current Asset'; schedule='Other Debtors'; }
-        else { category='Current Liability'; schedule='Other Creditors'; }
+        if(side==='dr'){ category='Current Asset'; schedule='Sundry debtors'; }
+        else { category='Current Liability'; schedule='Sundry creditors'; }
         reason=`No specific wording; ${side.toUpperCase()} balance within the ${prefix}xx group anchored by "${anchor.schedule}".`;
       }
       proposals.push({code:acct.code,name:acct.name,bal,category,schedule,reason,groupPrefix:prefix,confirmed:false});
@@ -11230,15 +11214,15 @@ function malaysiaAuditAIMap(code,name,bal){
   else if(n.match(/receivable|debtor/)){
     const p=taxAgentCodePrefixClass(code,bal,n);
     if(p) set(p.classification,p.treat,p.schedule,Math.max(.9,p.confidence),p.query,p.reason,p.wp);
-    else if(Number(bal)<0) set('Current Liability','Balance Sheet - Current Liability','Other Creditors',.9,true,'Receivable/debtor wording has a credit closing balance; classified as other creditor until auditor confirms.',true);
-    else set('Current Asset','Balance Sheet - Current Asset','Other Debtors',.94,false,'Receivable wording mapped to current assets.');
+    else if(Number(bal)<0) set('Current Liability','Balance Sheet - Current Liability','Sundry creditors',.9,true,'Receivable/debtor wording has a credit closing balance; classified as sundry creditor until auditor confirms.',true);
+    else set('Current Asset','Balance Sheet - Current Asset','Sundry debtors',.94,false,'Receivable wording mapped to current assets.');
   }
   else if(n.match(/\b(software|erp)\b/) && !n.match(/maintenance|subscription|support|customi[sz]e|qc service|licen[cs]e fee/)) set('Fixed Asset','CA Review - Schedule 3','Capital Allowance / FA Register',.9,true,'Named as a software/ERP purchase rather than a recurring fee -- likely a capital addition. Computer software/ERP generally qualifies for capital allowance (ICT equipment treatment); confirm self-developed vs purchased and claim CA rather than excluding it pending review by default.',true);
   else if(n.match(/fixed asset|property|plant|building|equipment|computer|office equipment|motor vehicle|furniture|renovation|signboard|capital work|trademark|goodwill/)) set('Fixed Asset','CA Review - Schedule 3','Capital Allowance / FA Register',.95,true,'Fixed asset should flow to FA/CA review and capital allowance schedule.',true);
   else if(n.match(/payable|creditor|accrual|accrued|sst|tax payable|short.*loan/)){
     const p=taxAgentCodePrefixClass(code,bal,n);
     if(p) set(p.classification,p.treat,p.schedule,Math.max(.9,p.confidence),p.query,p.reason,p.wp);
-    else if(Number(bal)>0) set('Current Asset','Balance Sheet - Current Asset','Other Debtors',.9,true,'Payable/creditor wording has a debit closing balance; classified as other debtor until auditor confirms.',true);
+    else if(Number(bal)>0) set('Current Asset','Balance Sheet - Current Asset','Sundry debtors',.9,true,'Payable/creditor wording has a debit closing balance; classified as sundry debtor until auditor confirms.',true);
     else set('Current Liability','Balance Sheet - Current Liability','BS Current Liabilities',.94,false,'Payable/accrual mapped to current liability.');
   }
   else if(n.match(/long.*loan|term loan|deferred tax/)) set('Non-Current Liability','Balance Sheet - Non-Current Liability','BS Non-Current Liabilities',.94,false,'Long-term obligation mapped to non-current liability.');
@@ -11340,38 +11324,38 @@ function taxAgentCodePrefixClass(code,bal){
   const tradeCreditorPrefixes=['400'];
   const otherCreditorPrefixes=['405','410','430','440'];
   if(tradeDebtorPrefixes.includes(p3)){
-    if(side==='cr') return make('Current Liability','Other Creditors','Code '+p3+' is a trade debtor family but has a credit closing balance, so it is treated as an other creditor / credit-balance debtor.',.9);
-    return make('Current Asset','Trade Debtors','Code '+p3+' is the trade debtor family.',.92);
+    if(side==='cr') return make('Current Liability','Sundry creditors','Code '+p3+' is a trade debtor family but has a credit closing balance, so it is treated as a sundry creditor / credit-balance debtor.',.9);
+    return make('Current Asset','Trade debtors','Code '+p3+' is the trade debtor family.',.92);
   }
   if(otherDebtorPrefixes.includes(p3)){
-    if(side==='cr') return make('Current Liability','Other Creditors','Code '+p3+' is an other debtor/debtor-family account but has a credit closing balance, so it is treated as other creditor.',.9);
-    return make('Current Asset','Other Debtors','Code '+p3+' is an other debtor family.',.9);
+    if(side==='cr') return make('Current Liability','Sundry creditors','Code '+p3+' is a sundry debtor/debtor-family account but has a credit closing balance, so it is treated as sundry creditor.',.9);
+    return make('Current Asset','Sundry debtors','Code '+p3+' is a sundry debtor family.',.9);
   }
   if(tradeCreditorPrefixes.includes(p3)){
-    if(side==='dr') return make('Current Asset','Other Debtors','Code '+p3+' is a trade creditor family but has a debit closing balance, so it is treated as an other debtor / debit-balance creditor.',.9);
-    return make('Current Liability','Trade Creditors','Code '+p3+' is the trade creditor family.',.92);
+    if(side==='dr') return make('Current Asset','Sundry debtors','Code '+p3+' is a trade creditor family but has a debit closing balance, so it is treated as a sundry debtor / debit-balance creditor.',.9);
+    return make('Current Liability','Trade creditors','Code '+p3+' is the trade creditor family.',.92);
   }
   if(otherCreditorPrefixes.includes(p3)){
-    if(side==='dr') return make('Current Asset','Other Debtors','Code '+p3+' is an other creditor family but has a debit closing balance, so it is treated as other debtor.',.9);
-    return make('Current Liability','Other Creditors','Code '+p3+' is an other creditor family.',.9);
+    if(side==='dr') return make('Current Asset','Sundry debtors','Code '+p3+' is a sundry creditor family but has a debit closing balance, so it is treated as sundry debtor.',.9);
+    return make('Current Liability','Sundry creditors','Code '+p3+' is a sundry creditor family.',.9);
   }
   // Any OTHER code within a known leading digit's family (e.g. 320,
   // 350, 415, 460...) that isn't one of the specific sub-families
   // above -- still classify it broadly from the leading digit rather
   // than falling through to a name-keyword guess. Within the 4xx
-  // family specifically, treat any not-yet-specific code as "Other
-  // Creditors" per the confirmed convention (400 = Trade, the rest of
-  // 40x = Other) -- this is exactly the case that was previously
+  // family specifically, treat any not-yet-specific code as "Sundry
+  // creditors" per the confirmed convention (400 = Trade, the rest of
+  // 40x = Sundry) -- this is exactly the case that was previously
   // falling through to expense-keyword matching.
   if(FIRST_DIGIT_CLASS_MAP[firstDigit]){
     const [drCls,crCls]=FIRST_DIGIT_CLASS_MAP[firstDigit];
     if(firstDigit==='4'){
-      if(side==='dr') return make(drCls,'Other Debtors','Code '+p3+' falls in the 4xx liability family but carries a debit balance, so treated as other debtor.',.75);
-      return make(crCls,'Other Creditors','Code '+p3+' falls in the 4xx liability family (400=Trade Creditors confirmed; remaining 40x=Other Creditors).',.8);
+      if(side==='dr') return make(drCls,'Sundry debtors','Code '+p3+' falls in the 4xx liability family but carries a debit balance, so treated as sundry debtor.',.75);
+      return make(crCls,'Sundry creditors','Code '+p3+' falls in the 4xx liability family (400=Trade creditors confirmed; remaining 40x=Sundry creditors).',.8);
     }
     if(firstDigit==='3'){
-      if(side==='cr') return make(crCls,'Other Creditors','Code '+p3+' falls in the 3xx current-asset family but carries a credit balance, so treated as other creditor.',.75);
-      return make(drCls,'Other Debtors','Code '+p3+' falls in the 3xx current-asset family.',.8);
+      if(side==='cr') return make(crCls,'Sundry creditors','Code '+p3+' falls in the 3xx current-asset family but carries a credit balance, so treated as sundry creditor.',.75);
+      return make(drCls,'Sundry debtors','Code '+p3+' falls in the 3xx current-asset family.',.8);
     }
   }
   return null;
@@ -11719,7 +11703,11 @@ function fsUpdateClass(sel,idx){const r=(window._fsRows||[])[Number(idx)-1];if(r
   // clear it rather than silently keeping a mismatched value.
   if(r.schedule) r.schedule=tbCanonicalSubCategory(r.schedule,(r.code||'')+' '+(r.name||''));
   if(r.schedule&&!tbSubCategoryOptions(r.classification).includes(r.schedule)) r.schedule='';
-  r.reason='Manual FS classification selected by user. Full mapping learned for this client.';mapLearnApply(r.code,r.name,mapLearnPayload(r,{classification:r.classification}));tfRequestRefreshAllSchedules();}}
+  r.reason='Manual FS classification selected by user. Full mapping learned for this client.';mapLearnApply(r.code,r.name,mapLearnPayload(r,{classification:r.classification}));
+  const tr=tbPatchRowBadge(sel);
+  const subCell=tr?tr.querySelector('.tb-subcat-cell'):null;
+  if(subCell) subCell.innerHTML=tbSubCategoryCellHtml(r);
+  tfRequestRefreshAllSchedules();}}
 // Same underlying update as fsUpdateClass, but used from the BS/P&L
 // Detailed views specifically: since those are built from the same rows as
 // the Trial Balance, changing a classification here also changes it there.
@@ -11743,6 +11731,7 @@ function fsUpdateSchedule(sel,idx){
     r.reason='Manual sub-category selected by user. Full mapping learned for this client.';
     mapLearnApply(r.code,r.name,mapLearnPayload(r,{classification:r.classification,schedule:r.schedule}));
     if(r.code&&r.classification&&r.schedule) learnSchedulePattern(r.code,r.classification,r.schedule);
+    tbPatchRowBadge(sel);
     tfRequestRefreshAllSchedules();
   }
 }
@@ -12865,6 +12854,22 @@ function tfRefreshAllSchedules(){
     }
   }
 }
+// Shared Sub-Category cell markup -- used both by the full table render below AND by
+// fsUpdateClass's instant single-row patch, so there's one source of truth instead of
+// two copies that can drift.
+function tbSubCategoryCellHtml(r){
+  return tbHasSubCategorySetup(r.classification)?`<select class="fi" style="font-size:11px;padding:4px 6px;width:100%;min-width:0;max-width:100%" onchange="fsUpdateSchedule(this,'${r.idx}')"><option value="">\u2014 select \u2014</option>${tbSubCategoryOptions(r.classification).map(s=>`<option value="${tfEsc(s)}" ${r.schedule===s?'selected':''}>${tfEsc(s)}</option>`).join('')}${r.schedule&&!tbSubCategoryOptions(r.classification).includes(r.schedule)?`<option value="${tfEsc(r.schedule)}" selected>${tfEsc(r.schedule)}</option>`:''}</select>`:`<span style="color:var(--t4);font-size:11px">\u2014</span>`;
+}
+// PERF: patches just the ONE row the user touched (its Status badge, "Auto"->"Manual")
+// directly in the DOM, instead of waiting for the debounced full-table render to reach
+// it. That render still runs shortly after (to keep totals/other tabs correct), but the
+// user sees their own click reflected in well under a millisecond instead of ~220ms+.
+function tbPatchRowBadge(sel){
+  const tr=sel&&sel.closest?sel.closest('tr'):null;
+  const badge=tr?tr.querySelector('.badge'):null;
+  if(badge){badge.textContent='Manual';badge.className='badge b-green';}
+  return tr;
+}
 function renderFinstmt(){
   tbSyncLiveFilterState();
   const el=document.getElementById('finstmtBody')||document.getElementById('fs-tab-tb');
@@ -12928,7 +12933,7 @@ function renderFinstmt(){
       <td class="r">${r.lyDr?fsMoney(r.lyDr):'-'}</td><td class="r">${r.lyCr?fsMoney(r.lyCr):'-'}</td>
       <td class="r">${r.bal>0?fsMoney(r.bal):'-'}</td><td class="r">${r.bal<0?fsMoney(-r.bal):'-'}</td>
       <td><select class="fi" style="font-size:11px;padding:4px 6px;width:100%;min-width:0" onchange="fsUpdateClass(this,'${r.idx}')">${fsClassOptionsForRow(cls,r).map(c=>`<option value="${c}" ${r.classification===c?'selected':''}>${c}</option>`).join('')}</select></td>
-      <td>${tbHasSubCategorySetup(r.classification)?`<select class="fi" style="font-size:11px;padding:4px 6px;width:100%;min-width:0;max-width:100%" onchange="fsUpdateSchedule(this,'${r.idx}')"><option value="">\u2014 select \u2014</option>${tbSubCategoryOptions(r.classification).map(s=>`<option value="${tfEsc(s)}" ${r.schedule===s?'selected':''}>${tfEsc(s)}</option>`).join('')}${r.schedule&&!tbSubCategoryOptions(r.classification).includes(r.schedule)?`<option value="${tfEsc(r.schedule)}" selected>${tfEsc(r.schedule)}</option>`:''}</select>`:`<span style="color:var(--t4);font-size:11px">\u2014</span>`}</td>
+      <td class="tb-subcat-cell">${tbSubCategoryCellHtml(r)}</td>
       <td><span class="badge ${r.confirmed?'b-green':'b-blue'}">${r.confirmed?'Manual':'Auto'}</span></td>
     </tr>`).join('')}<tr class="tot" data-tb-search="__total__"><td colspan="3">TOTAL</td><td class="r">${fsMoney(lyDR)}</td><td class="r">${fsMoney(lyCR)}</td><td class="r">${fsMoney(dr)}</td><td class="r">${fsMoney(cr)}</td><td colspan="3" style="color:${diff<1&&lyDiff<1?'var(--green3)':'var(--red3)'}">${lyDiff<1?'LY BALANCED':'LY DIFF '+fsMoney(lyDiff)} &middot; ${diff<1?'TY BALANCED':'TY DIFF '+fsMoney(diff)}</td></tr></tbody>
   </table></div>`;
