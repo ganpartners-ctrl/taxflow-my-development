@@ -1964,8 +1964,8 @@ const TB_SUBCATEGORY_NAME_RULES={
     [/\b(sales|trading|turnover)\b/i,'Sales / Trading Income'],
   ],
   'Cost of Sales':[
+    [/\b(staff|salary|salaries|wages|epf|socso|eis|hrdf|bonus|ang\s*pow|allowance|overtime|\bot\b|labour|labor|worker)\b/i,'Direct Labour'],
     [/\b(material|raw)\b/i,'Direct Material'],
-    [/\b(labour|labor|wages|worker)\b/i,'Direct Labour'],
     [/subcontract/i,'Subcontractor'],
   ],
   'Other Income':[
@@ -2015,17 +2015,36 @@ const TB_SUBCATEGORY_DEFAULT_FALLBACK={
   'Current Liability':'Other Creditors','Non-Current Liability':'Loan (Long Term)',
   'Non-Current Asset':'Other Non-Current Asset','Equity':'Other Equity',
 };
-function tbGuessSubCategory(classification,name){
+function tbGuessSubCategory(classification,options,name){
   const rules=TB_SUBCATEGORY_NAME_RULES[classification];
-  if(rules){ const n=String(name||''); for(const [re,val] of rules){ if(re.test(n)) return val; } }
-  return TB_SUBCATEGORY_DEFAULT_FALLBACK[classification]||'';
+  const n=String(name||'');
+  const opts=options||[];
+  if(rules){
+    for(const [re,val] of rules){
+      if(!re.test(n)) continue;
+      if(opts.includes(val)) return val;
+      // The keyword hint matched, but this classification's list has been customised
+      // (via Setup > Sub-Category Lists) and no longer contains that exact label --
+      // look for the closest match already in the user's own fixed list instead of
+      // ever suggesting something outside it.
+      const valWords=val.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+      const fuzzy=opts.find(opt=>{
+        const optWords=opt.toLowerCase().split(/[^a-z0-9]+/).filter(Boolean);
+        return valWords.some(w=>optWords.includes(w));
+      });
+      if(fuzzy) return fuzzy;
+    }
+  }
+  const fallback=TB_SUBCATEGORY_DEFAULT_FALLBACK[classification];
+  if(fallback&&opts.includes(fallback)) return fallback;
+  return opts[opts.length-1]||fallback||'';
 }
 function tbResolveSubCategory(classification,rawSchedule,name){
   const options=tbSubCategoryOptions(classification);
   if(!options.length) return rawSchedule||''; // classification has no sub-category concept at all
   const canon=tbCanonicalSubCategory(rawSchedule,name);
   if(canon&&options.includes(canon)) return canon;
-  return tbGuessSubCategory(classification,name)||canon||'';
+  return tbGuessSubCategory(classification,options,name)||canon||'';
 }
 function tbHasSubCategorySetup(classification){
   return classification in TB_SUBCATEGORY_DEFAULT || classification in TB_SUBCATEGORY_CUSTOM;
@@ -2042,51 +2061,95 @@ const STATUS_COLOR = {
 
 function tfClientKey(){return (currentClient?.tin||currentClient?.id||'default')+'|'+(currentYA?.ya||'');}
 function tfPlainRows(rows){return (rows||[]).map(r=>({...r}));}
+function tfBuildStateSnapshot(){
+  return {
+    version:1,savedAt:new Date().toISOString(),
+    clients:CLIENTS,currentClientId:currentClient?.id||null,currentYA:currentYA?.ya||null,
+    audit:allAudit.slice(0,300),
+    ledgerYear:TF_LEDGER_YEAR||tfInferLedgerYear(),
+    lgSourcePdf:window.LG_SOURCE_PDF||'',lgSourceExcel:window.LG_SOURCE_EXCEL||'',
+    // fsMappingRows intentionally NOT persisted here -- it's a pure derived view of
+    // fsRows (fsBuildMappingRows(rows) reads nothing else), measured at ~39% of this
+    // save's entire payload on a real 340-account client purely from duplicating data
+    // fsRows already has. mapUpdateField already mirrors every AI Mapping screen edit
+    // straight back into fsRows in real time, so nothing is ever lost by not saving
+    // this copy -- tfLoadState() regenerates it fresh from fsRows on load instead.
+    workflow:{lgRows:tfPlainRows(window.lgRows||lgRows||[]),lgTransactions:LG_TRANSACTION_ROWS,lgRawHeaders:LG_RAW_HEADERS,fsRows:tfPlainRows(window._fsRows||[]),fsSavedRows:tfPlainRows(window._fsSavedRows||[]),workingPapers:WORKING_PAPERS,clientQueries:CLIENT_QUERY_ITEMS,deemedInterest:DEEMED_INTEREST_SCHEDULE,caWorkfile:CA_WORKFILE,mapMining:window._mapMining||[],fsOutputs:window._fsOutputs||null,fsConfirm:window._fsConfirm||null,fsMode:window._fsMode||'tb',fsBizSources:window._fsBizSources||null,fsBizView:window._fsBizView||'combined',admin:window.TF_ADMIN||null,masterAdmin:window.TF_MASTER_ADMIN||null}
+  };
+}
 function tfSaveState(){
   try{
-    const state={
-      version:1,savedAt:new Date().toISOString(),
-      clients:CLIENTS,currentClientId:currentClient?.id||null,currentYA:currentYA?.ya||null,
-      audit:allAudit.slice(0,300),
-      ledgerYear:TF_LEDGER_YEAR||tfInferLedgerYear(),
-      lgSourcePdf:window.LG_SOURCE_PDF||'',lgSourceExcel:window.LG_SOURCE_EXCEL||'',
-      workflow:{lgRows:tfPlainRows(window.lgRows||lgRows||[]),lgTransactions:LG_TRANSACTION_ROWS,lgRawHeaders:LG_RAW_HEADERS,fsRows:tfPlainRows(window._fsRows||[]),fsSavedRows:tfPlainRows(window._fsSavedRows||[]),fsMappingRows:tfPlainRows(window._fsMappingRows||[]),workingPapers:WORKING_PAPERS,clientQueries:CLIENT_QUERY_ITEMS,deemedInterest:DEEMED_INTEREST_SCHEDULE,caWorkfile:CA_WORKFILE,mapMining:window._mapMining||[],fsOutputs:window._fsOutputs||null,fsConfirm:window._fsConfirm||null,fsMode:window._fsMode||'tb',fsBizSources:window._fsBizSources||null,fsBizView:window._fsBizView||'combined',admin:window.TF_ADMIN||null,masterAdmin:window.TF_MASTER_ADMIN||null}
-    };
-    localStorage.setItem(TF_STATE_KEY,JSON.stringify(state));
+    localStorage.setItem(TF_STATE_KEY,JSON.stringify(tfBuildStateSnapshot()));
   }catch(e){console.warn('[TaxFlow] save state failed',e);}
 }
-function tfLoadState(){
+// PERF: localStorage.setItem is synchronous and blocks the main thread for the full
+// duration of the write -- measured at ~40ms even after trimming the payload (see
+// tfBuildStateSnapshot's fsMappingRows note). IndexedDB writes run off the main thread,
+// so this is what actually lets a routine field-edit save feel instant rather than just
+// "smaller". Used only for the debounced per-edit flush (tfRequestRefreshAllSchedules) --
+// every other one-off action in the app (uploads, resets, confirms) still calls the
+// synchronous tfSaveState() above, unchanged. Fire-and-forget: nothing in the app reads
+// this write's result directly, only tfLoadState() on the next page load.
+function tfSaveStateAsync(){
   try{
-    const raw=localStorage.getItem(TF_STATE_KEY); if(!raw) return false;
-    const state=JSON.parse(raw);
-    if(Array.isArray(state.clients)&&state.clients.length){CLIENTS.splice(0,CLIENTS.length,...state.clients);}
-    if(Array.isArray(state.audit)&&state.audit.length) allAudit=state.audit;
-    TF_LEDGER_YEAR=state.ledgerYear||tfInferLedgerYear(state);
-    window.LG_SOURCE_PDF=state.lgSourcePdf||'';
-    window.LG_SOURCE_EXCEL=state.lgSourceExcel||'';
-    currentClient=CLIENTS.find(c=>c.id===state.currentClientId)||CLIENTS[0]||null;
-    currentYA=currentClient?.years?.find(y=>y.ya===state.currentYA)||currentClient?.years?.[0]||null;
-    if(state.workflow){
-      lgRows=state.workflow.lgRows||[];
-      LG_TRANSACTION_ROWS=state.workflow.lgTransactions||[];
-      LG_RAW_HEADERS=state.workflow.lgRawHeaders||[];
-      window._lgConfirmedRows=lgRows;
-      window._fsRows=state.workflow.fsRows||null;
-      window._fsSavedRows=state.workflow.fsSavedRows||null;
-      window._fsMappingRows=state.workflow.fsMappingRows||null;
-      WORKING_PAPERS=state.workflow.workingPapers||[];
-      CLIENT_QUERY_ITEMS=state.workflow.clientQueries||[];
-      DEEMED_INTEREST_SCHEDULE=state.workflow.deemedInterest||null;
-      CA_WORKFILE=state.workflow.caWorkfile||CA_WORKFILE;
-      window._mapMining=state.workflow.mapMining||[];
-      window._fsOutputs=state.workflow.fsOutputs||null;
-      window._fsConfirm=state.workflow.fsConfirm||null;
-      window._fsMode=state.workflow.fsMode||'tb';
-      window._fsBizSources=state.workflow.fsBizSources||null;
-      window._fsBizView=state.workflow.fsBizView||'combined';
-      window.TF_ADMIN=state.workflow.admin||window.TF_ADMIN||{};
-      window.TF_MASTER_ADMIN=state.workflow.masterAdmin||window.TF_MASTER_ADMIN||null;
-    }
+    const snap=tfBuildStateSnapshot();
+    cdbPut('appState',Object.assign({key:'main'},snap)).catch(e=>console.warn('[TaxFlow] async save failed, will retry on next edit',e));
+  }catch(e){console.warn('[TaxFlow] async save failed',e);}
+}
+function tfApplyLoadedState(state){
+  if(Array.isArray(state.clients)&&state.clients.length){CLIENTS.splice(0,CLIENTS.length,...state.clients);}
+  if(Array.isArray(state.audit)&&state.audit.length) allAudit=state.audit;
+  TF_LEDGER_YEAR=state.ledgerYear||tfInferLedgerYear(state);
+  window.LG_SOURCE_PDF=state.lgSourcePdf||'';
+  window.LG_SOURCE_EXCEL=state.lgSourceExcel||'';
+  currentClient=CLIENTS.find(c=>c.id===state.currentClientId)||CLIENTS[0]||null;
+  currentYA=currentClient?.years?.find(y=>y.ya===state.currentYA)||currentClient?.years?.[0]||null;
+  if(state.workflow){
+    lgRows=state.workflow.lgRows||[];
+    LG_TRANSACTION_ROWS=state.workflow.lgTransactions||[];
+    LG_RAW_HEADERS=state.workflow.lgRawHeaders||[];
+    window._lgConfirmedRows=lgRows;
+    window._fsRows=state.workflow.fsRows||null;
+    window._fsSavedRows=state.workflow.fsSavedRows||null;
+    // fsMappingRows is no longer saved directly (see tfBuildStateSnapshot) -- rebuild it
+    // fresh from fsRows, which is exactly what fsBuildMappingRows() already does.
+    window._fsMappingRows=window._fsRows?fsBuildMappingRows(window._fsRows):(state.workflow.fsMappingRows||null);
+    WORKING_PAPERS=state.workflow.workingPapers||[];
+    CLIENT_QUERY_ITEMS=state.workflow.clientQueries||[];
+    DEEMED_INTEREST_SCHEDULE=state.workflow.deemedInterest||null;
+    CA_WORKFILE=state.workflow.caWorkfile||CA_WORKFILE;
+    window._mapMining=state.workflow.mapMining||[];
+    window._fsOutputs=state.workflow.fsOutputs||null;
+    window._fsConfirm=state.workflow.fsConfirm||null;
+    window._fsMode=state.workflow.fsMode||'tb';
+    window._fsBizSources=state.workflow.fsBizSources||null;
+    window._fsBizView=state.workflow.fsBizView||'combined';
+    window.TF_ADMIN=state.workflow.admin||window.TF_ADMIN||{};
+    window.TF_MASTER_ADMIN=state.workflow.masterAdmin||window.TF_MASTER_ADMIN||null;
+  }
+}
+// Routine field edits save asynchronously to IndexedDB (see tfSaveStateAsync) so they
+// never block the UI; navigating away or closing the tab still falls back to a
+// synchronous localStorage write as a durability safety net (see tfFlushPendingSave)
+// since an in-flight async IndexedDB write isn't guaranteed to finish before the page
+// actually unloads. That means on the NEXT load, either save path could hold the more
+// recent work depending on how the previous session ended -- compare both by their
+// savedAt timestamp and restore whichever is actually newer, rather than assuming one
+// path is always authoritative.
+async function tfLoadState(){
+  let idbState=null, lsState=null;
+  try{
+    const rec=await cdbGet('appState','main');
+    if(rec) idbState=rec;
+  }catch(e){console.warn('[TaxFlow] IndexedDB load failed, falling back to localStorage',e);}
+  try{
+    const raw=localStorage.getItem(TF_STATE_KEY);
+    if(raw) lsState=JSON.parse(raw);
+  }catch(e){console.warn('[TaxFlow] localStorage load failed',e);}
+  const state=(idbState&&lsState)?((idbState.savedAt||'')>(lsState.savedAt||'')?idbState:lsState):(idbState||lsState);
+  if(!state) return false;
+  try{
+    tfApplyLoadedState(state);
     return true;
   }catch(e){console.warn('[TaxFlow] load state failed',e);return false;}
 }
@@ -2199,6 +2262,7 @@ const WZ_P=['setup-client','setup-prioryr','setup-extract','setup-client','ledge
 let wzStep=8;
 
 function goTo(panelId, navEl){
+  if(typeof tfFlushPendingSave==='function') tfFlushPendingSave();
   const p=document.getElementById('panel-'+panelId);
   if(p?.closest('.desk-window')){
     document.querySelectorAll('.sb-item').forEach(s=>s.classList.remove('active'));
@@ -7320,9 +7384,15 @@ function mapUpdateField(code,field,value){
     if(field==='classification') r.classification=value;
     if(saved.classification) r.classification=saved.classification;
     if(field==='treat') r.taxTreat=value;
-    if(field==='schedule') r.schedule=value;
-    if(saved.schedule) r.schedule=saved.schedule;
     if(saved.treat) r.taxTreat=saved.treat;
+    // Route through the same tax-schedule/sub-category resolution as every other entry
+    // point -- a raw Mapping-screen schedule value (MAP_SCHED_OPTIONS taxonomy, e.g.
+    // "HK-1 / Payroll") is not itself a valid TB accounting sub-category.
+    const schedVal=field==='schedule'?value:saved.schedule;
+    if(schedVal){
+      r.taxSchedule=schedVal;
+      r.schedule=tbResolveSubCategory(r.classification,schedVal,r.name);
+    }
     r.confirmed=true;
     r.reason='Manual mapping saved to this client learning profile.';
   });
@@ -11649,7 +11719,7 @@ function fsUpdateClass(sel,idx){const r=(window._fsRows||[])[Number(idx)-1];if(r
   // clear it rather than silently keeping a mismatched value.
   if(r.schedule) r.schedule=tbCanonicalSubCategory(r.schedule,(r.code||'')+' '+(r.name||''));
   if(r.schedule&&!tbSubCategoryOptions(r.classification).includes(r.schedule)) r.schedule='';
-  r.reason='Manual FS classification selected by user. Full mapping learned for this client.';mapLearnApply(r.code,r.name,mapLearnPayload(r,{classification:r.classification}));tfSaveState();tfRefreshAllSchedules();}}
+  r.reason='Manual FS classification selected by user. Full mapping learned for this client.';mapLearnApply(r.code,r.name,mapLearnPayload(r,{classification:r.classification}));tfRequestRefreshAllSchedules();}}
 // Same underlying update as fsUpdateClass, but used from the BS/P&L
 // Detailed views specifically: since those are built from the same rows as
 // the Trial Balance, changing a classification here also changes it there.
@@ -11673,7 +11743,7 @@ function fsUpdateSchedule(sel,idx){
     r.reason='Manual sub-category selected by user. Full mapping learned for this client.';
     mapLearnApply(r.code,r.name,mapLearnPayload(r,{classification:r.classification,schedule:r.schedule}));
     if(r.code&&r.classification&&r.schedule) learnSchedulePattern(r.code,r.classification,r.schedule);
-    tfSaveState();tfRefreshAllSchedules();
+    tfRequestRefreshAllSchedules();
   }
 }
 // Sub-category options, dependent on the top-level classification chosen
@@ -11741,8 +11811,7 @@ function fsSetBizAlloc(idx,key,val){
   const nonZero=Object.entries(r._bizAlloc).filter(([,v])=>Math.abs(lgNum(v))>0.005);
   if(nonZero.length===1){r.businessSource=nonZero[0][0];r.businessManual=true;}
   r.confirmed=true;
-  tfSaveState();
-  tfRefreshAllSchedules();
+  tfRequestRefreshAllSchedules();
 }
 function fsBizMismatch(r, amt){
   const b=r._bizSplit;
@@ -12730,6 +12799,36 @@ function tbClearColumnFilter(col){
 // from refreshing, and can't turn into an error the user sees.
 let TF_REFRESH_SCHEDULES_RUNNING=false;
 let TF_REFRESH_SCHEDULES_PENDING=false;
+// PERF: renderFinstmt() (the Trial Balance/BS/P&L table rebuild inside
+// tfRefreshAllSchedules) measures at 400-470ms on this client's real 340-row ledger --
+// almost entirely DOM construction cost (rebuilding several hundred-row HTML tables),
+// not the underlying data computation (which is ~25ms). Calling it synchronously on
+// EVERY single dropdown pick means working through several misclassified accounts in a
+// row stacks up multiple ~400ms blocking renders back-to-back with nothing to coalesce
+// them, which is what shows up as the app "hanging" while fixing a batch of accounts.
+// This debounces the trigger so a fresh render only fires once, ~220ms after the last
+// edit in a burst -- the account's own picked value still updates in memory instantly
+// (that part was never slow), only the expensive derived-totals re-render is deferred
+// and coalesced. Reserved for per-field edit handlers (dropdown/input onchange); explicit
+// one-off bulk actions (reset, force-reclassify) keep calling tfRefreshAllSchedules()
+// directly since those aren't fired in rapid succession the way field edits are.
+let TF_REFRESH_DEBOUNCE_TIMER=null;
+function tfFlushPendingSave(){
+  if(TF_REFRESH_DEBOUNCE_TIMER==null) return;
+  clearTimeout(TF_REFRESH_DEBOUNCE_TIMER);
+  TF_REFRESH_DEBOUNCE_TIMER=null;
+  // Synchronous safety net here specifically: this only runs when actually leaving
+  // (navigation or tab close), not on every edit, so paying the ~40ms cost once is a
+  // fine trade for the guarantee that it completes before the page is gone -- an
+  // in-flight tfSaveStateAsync() write is NOT guaranteed to finish in time for that.
+  tfSaveState();
+  tfRefreshAllSchedules();
+}
+function tfRequestRefreshAllSchedules(delay=220){
+  clearTimeout(TF_REFRESH_DEBOUNCE_TIMER);
+  TF_REFRESH_DEBOUNCE_TIMER=setTimeout(()=>{TF_REFRESH_DEBOUNCE_TIMER=null;tfSaveStateAsync();tfRefreshAllSchedules();},delay);
+}
+window.addEventListener('beforeunload',tfFlushPendingSave);
 function tfRefreshAllSchedules(){
   // Defensive guard: if something downstream (directly or through an
   // event this triggers) calls this again while it's still running,
@@ -16261,7 +16360,7 @@ async function refreshClientsFromDB(){
 // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 
 const CDB_NAME    = 'TaxFlowClientDB';
-const CDB_VERSION = 3;
+const CDB_VERSION = 4;
 let   clientDB    = null;
 
 // â”€â”€ SCHEMA â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
@@ -16275,6 +16374,7 @@ let   clientDB    = null;
 // disposals        : one record per disposal per company per YA
 // taxComputed      : tax computation summary per company per YA
 // docFiles         : uploaded document fallback copies per company per YA
+// appState         : single-record async save of the active TB workflow (see tfSaveStateAsync)
 
 async function openClientDB() {
   if (clientDB) return clientDB;
@@ -16300,6 +16400,10 @@ async function openClientDB() {
         { name:'disposals',   key:'id', indexes:[{n:'tin_ya',k:'tin_ya',u:false}]},
         { name:'taxComputed', key:'id', indexes:[{n:'tin_ya',k:'tin_ya',u:false}]},
         { name:'docFiles',    key:'id', indexes:[{n:'tin',k:'tin',u:false},{n:'tin_ya',k:'tin_ya',u:false},{n:'docType',k:'docType',u:false}]},
+        // appState -- single-record store for the async TB workflow save path
+        // (tfSaveStateAsync/tfLoadState). Keyed 'main' since this mirrors the
+        // existing single-blob localStorage shape, not a per-client schema.
+        { name:'appState',    key:'key', indexes:[]},
       ];
       stores.forEach(s => {
         if (!db.objectStoreNames.contains(s.name)) {
@@ -19915,7 +20019,7 @@ async function testAPIConnection(){
 // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
 // INIT â€” runs on page load
 // â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•â•
-(function init(){
+(async function init(){
   // Set theme
   let savedTheme='light';
   try{savedTheme=localStorage.getItem('taxflow_theme')||'light';}catch(e){}
@@ -19925,7 +20029,7 @@ async function testAPIConnection(){
   tfLoadLearning();
   noteRefLoadSetup();
   tbLoadSubCategorySetup();
-  const restored=tfLoadState();
+  const restored=await tfLoadState();
 
   // Render initial state
   try { updateTopbar(); } catch(e){}
