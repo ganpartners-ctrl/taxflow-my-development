@@ -4195,7 +4195,7 @@ function tcStatusSave({silent=false}={}){
     currentYA.bal=s.summary.balanceTaxPayableRefundable;
     currentYA.taxStatus=s.summary.status;
   }
-  tfSaveState();
+  tfRequestRefreshAllSchedules();
   if(!silent) showNotif('success','Tax Status saved','Losses and tax payable/refundable reconciliation saved to client database');
 }
 function tcStatusConfirm(){
@@ -5124,7 +5124,7 @@ function tcInfoUpdate(kind,idx,key,val){
   arr[idx][key]=val;
   arr[idx].status=arr[idx].status==='confirmed'?'confirmed':'review_required';
   currentClient.kyc[map[kind]]=arr;
-  tfSaveState();
+  tfRequestRefreshAllSchedules();
 }
 
 function tcConfirmInfo(kind){
@@ -5295,7 +5295,7 @@ function taxInstalmentToggle(id,checked){
 function taxInstalmentSet(id,key,value){
   const c=CLIENTS.find(x=>x.id===id); if(!c) return;
   taxInstalmentRecord(c)[key]=value;
-  tfSaveState();
+  tfRequestRefreshAllSchedules();
 }
 
 function taxInstalmentLetter(c){
@@ -6201,7 +6201,7 @@ function wpCapture(id){
   });
   const total=wp.lines.reduce((s,l)=>s+wpLineLedgerAmount(l),0);
   const el=document.getElementById('wp-ledger-total-'+id); if(el) el.textContent=fsLineAmount(total);
-  tfSaveState();
+  tfRequestRefreshAllSchedules();
 }
 function wpAddLine(id){const wp=WORKING_PAPERS.find(w=>w.id===id);if(!wp)return;const line={date:'',ref:'',particulars:'',debit:0,credit:0,amount:0,balance:0,clientConfirmation:'',internalCheck:'',taxTreatment:wp.treatment||'',paidToType:'Company name',paidTo:'',paidToId:'',paidFor:'',periodCovered:currentYA?.basisFrom&&currentYA?.basisTo?`${currentYA.basisFrom} to ${currentYA.basisTo}`:'',taxComment:wpStandardReplyFor(wp,{}),userComment:'',queryFlag:'Optional',_bizAlloc:{}};wpBusinessList().forEach((b,i)=>{line._bizAlloc[b.key]=i===0?0:'';});wp.lines.push(line);renderWP();tfSaveState();}
 function wpDeleteLine(id,i){const wp=WORKING_PAPERS.find(w=>w.id===id);if(!wp)return;wp.lines.splice(i,1);renderWP();tfSaveState();}
@@ -6318,11 +6318,11 @@ function wpCreateQuery(id){
   tfSaveState(); renderQueries(); goTo('queries');
 }
 
-function adminSetReply(key,val){wpAdminDefaults();window.TF_ADMIN.standardReplies[key]=val;tfSaveState();}
-function adminSetUser(i,key,val){wpAdminDefaults();if(!window.TF_ADMIN.users[i])return;window.TF_ADMIN.users[i][key]=val;tfSaveState();}
+function adminSetReply(key,val){wpAdminDefaults();window.TF_ADMIN.standardReplies[key]=val;tfRequestRefreshAllSchedules();}
+function adminSetUser(i,key,val){wpAdminDefaults();if(!window.TF_ADMIN.users[i])return;window.TF_ADMIN.users[i][key]=val;tfRequestRefreshAllSchedules();}
 function adminAddUser(){wpAdminDefaults();window.TF_ADMIN.users.push({staffId:'',name:'',role:'User',access:'Assigned projects only',status:'Active'});renderAdminPanel();tfSaveState();}
 function adminResetPassword(i){wpAdminDefaults();const u=window.TF_ADMIN.users[i];if(!u)return;u.passwordResetAt=new Date().toISOString();showNotif('success','Password reset','Reset flag created for '+(u.name||u.staffId||'user'));tfSaveState();renderAdminPanel();}
-function adminSetApproval(i,key,val){wpAdminDefaults();if(!window.TF_ADMIN.approvalLevels[i])return;window.TF_ADMIN.approvalLevels[i][key]=val;tfSaveState();}
+function adminSetApproval(i,key,val){wpAdminDefaults();if(!window.TF_ADMIN.approvalLevels[i])return;window.TF_ADMIN.approvalLevels[i][key]=val;tfRequestRefreshAllSchedules();}
 function adminAddApproval(){wpAdminDefaults();window.TF_ADMIN.approvalLevels.push({level:'',role:'',authority:''});renderAdminPanel();tfSaveState();}
 function renderAdminPanel(){
   wpAdminDefaults();
@@ -6423,7 +6423,7 @@ async function testCaHpConnection(){
   }
 }
 
-function masterAdminSet(i,key,val){wpAdminDefaults();if(!window.TF_MASTER_ADMIN.admins[i])return;window.TF_MASTER_ADMIN.admins[i][key]=val;tfSaveState();}
+function masterAdminSet(i,key,val){wpAdminDefaults();if(!window.TF_MASTER_ADMIN.admins[i])return;window.TF_MASTER_ADMIN.admins[i][key]=val;tfRequestRefreshAllSchedules();}
 function masterAdminAdd(){wpAdminDefaults();window.TF_MASTER_ADMIN.admins.push({name:'',email:'',status:'Active'});renderMasterAdminPanel();tfSaveState();}
 function renderMasterAdminPanel(){
   wpAdminDefaults();
@@ -6598,13 +6598,13 @@ function diRowHTML(r,i){
 function diHeaderChange(key,val){
   const s=diEnsure();
   s[key]=['ya','summaryTaxDeduct','summaryLoanInterestDeduction'].includes(key)?(ncNum(val)||0):val;
-  tfSaveState();
+  tfRequestRefreshAllSchedules();
 }
 function diCell(i,key,val){
   const s=diEnsure(); if(!s.rows[i]) return;
   s.rows[i][key]=['loanAmount','alr','interest'].includes(key)?ncNum(val):val;
   if(key==='loanAmount'||key==='alr') s.rows[i].interest=diCalc(s.rows[i]);
-  tfSaveState();
+  tfRequestRefreshAllSchedules();
 }
 function diRecalculate(show){
   const s=diEnsure();
@@ -8273,7 +8273,7 @@ function kycUpdateBusinessActivity(idx,field,value){
     db.records=db.records||{};
     db.records.business_activities=currentClient.kyc.businessActivities;
   }
-  tfSaveState();
+  tfRequestRefreshAllSchedules();
 }
 async function kycUploadBusinessIncentiveDoc(idx,input){
   const file=input?.files?.[0];
@@ -11809,7 +11809,7 @@ function fsNormalizeBusinessRows(rows){
   });
 }
 function fsSetBusinessView(v){window._fsBizView=v||'combined';tfSaveState();renderFinstmt();}
-function fsSetBusinessName(key,val,rerender=true){const s=fsBusinessSources();s[key]=String(val||'').trim()||(`Business ${String(key).replace('biz','')||1}`);tfSaveState();if(rerender)renderFinstmt();}
+function fsSetBusinessName(key,val,rerender=true){const s=fsBusinessSources();s[key]=String(val||'').trim()||(`Business ${String(key).replace('biz','')||1}`);tfRequestRefreshAllSchedules();if(rerender)renderFinstmt();}
 
 // ── Business segment split (% ↔ RM bidirectional) ──
 function fsGetBizSplit(r, amt){
@@ -18831,6 +18831,14 @@ function caRenderPDFSplitView(rows,garbledMarkerRe){
     </div>
   </div>`;
 }
+// PERF/MEMORY: this fires on every single keystroke while typing in any Work File
+// cell (oninput on a contenteditable table) -- calling the full synchronous
+// tfSaveState() here was the same multi-megabyte-payload problem that caused the
+// earlier Out-of-Memory crash on the TB screen, except triggered by continuous typing
+// instead of discrete clicks, which fires far more often. Use the same debounced async
+// save path instead: the cell's own content already updates instantly (that's native
+// contenteditable behaviour, not dependent on this function), only the actual save is
+// deferred and lightened.
 function caWorkfileCapture(){
   const table=document.getElementById('ca-workfile-table'); if(!table) return;
   CA_WORKFILE.cols=Array.from(table.querySelectorAll('thead th[data-col]')).map(th=>th.textContent.trim());
@@ -18838,7 +18846,7 @@ function caWorkfileCapture(){
     const sel=td.querySelector('select');
     return sel?sel.value:td.textContent.trim();
   }));
-  tfSaveState();
+  tfRequestRefreshAllSchedules();
 }
 function caWorkfileAddLine(at=null){caEnsureWorkfile();const row=Array(CA_WORKFILE.cols.length).fill('');caWorkSet(row,'CA Type','Non-ACA');if(at==null)CA_WORKFILE.rows.push(row);else CA_WORKFILE.rows.splice(Number(at)+1,0,row);renderCAWorkfile();tfSaveState();}
 function caWorkfileDeleteLine(at){caEnsureWorkfile();CA_WORKFILE.rows.splice(Number(at),1);renderCAWorkfile();tfSaveState();}
